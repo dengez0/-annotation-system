@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <title>Simple Label Studio</title>
+    <link rel="stylesheet" href="/static/css/style.css?v=3">
+    <style>
+        .main-folder-card {
+            background: var(--bg-secondary); border: 1px solid var(--border-color);
+            border-radius: 8px; margin-bottom: 14px; overflow: hidden;
+        }
+        .main-folder-header {
+            display: flex; align-items: center; padding: 14px 18px;
+            cursor: pointer; user-select: none; transition: background 0.15s;
+        }
+        .main-folder-header:hover { background: var(--bg-hover); }
+        .main-folder-icon { font-size: 22px; margin-right: 10px; }
+        .main-folder-info { flex: 1; }
+        .main-folder-name { font-weight: 600; font-size: 16px; color: var(--text-primary); }
+        .main-folder-meta { font-size: 13px; color: var(--text-secondary); margin-top: 2px; }
+        .main-folder-actions { display: flex; gap: 4px; }
+        .main-folder-arrow {
+            font-size: 13px; transition: transform 0.2s; color: var(--text-dim);
+            margin-left: 8px; padding: 6px;
+        }
+        .main-folder-card.open .main-folder-arrow { transform: rotate(90deg); }
+
+        .subfolder-list { display: none; border-top: 1px solid var(--border-color); }
+        .main-folder-card.open .subfolder-list { display: block; }
+
+        .subfolder-item {
+            display: flex; align-items: center; padding: 9px 18px 9px 48px;
+            transition: background 0.15s; border-bottom: 1px solid rgba(128,128,128,0.07);
+        }
+        .subfolder-item:hover { background: var(--bg-hover); }
+        .subfolder-item:last-child { border-bottom: none; }
+        .subfolder-icon { font-size: 16px; margin-right: 8px; color: var(--text-dim); }
+        .subfolder-name { flex: 1; font-size: 14px; }
+        .subfolder-name a { color: var(--accent-blue); text-decoration: none; }
+        .subfolder-name a:hover { text-decoration: underline; }
+        .subfolder-count { font-size: 12px; color: var(--text-dim); margin-right: 8px; }
+        .subfolder-actions { display: flex; gap: 4px; }
+
+        .btn-icon {
+            background: transparent; border: 1px solid var(--border-color);
+            color: var(--text-secondary); padding: 4px 9px; border-radius: 3px;
+            cursor: pointer; font-size: 12px;
+        }
+        .btn-icon:hover { background: var(--bg-hover); color: var(--text-primary); }
+        .btn-icon.delete { color: var(--accent-red); border-color: var(--accent-red); }
+        .btn-icon.delete:hover { background: var(--accent-red); color: #fff; }
+        .btn-icon.export { color: var(--accent-green); border-color: var(--accent-green); }
+        .btn-icon.export:hover { background: var(--accent-green); color: #fff; }
+
+        .upload-section {
+            background: var(--bg-secondary); border: 1px solid var(--border-color);
+            border-radius: 8px; padding: 18px; margin-bottom: 20px;
+        }
+        .upload-section h3 { margin: 0 0 10px 0; font-size: 16px; }
+        .upload-section p { font-size: 13px; }
+        .upload-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        .upload-row input[type="text"] { padding: 8px 12px; background: var(--input-bg); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px; font-size: 14px; }
+        .upload-target-label { color: var(--text-dim); font-size: 14px; white-space: nowrap; }
+        .upload-target-val { color: var(--accent-blue); font-weight: 600; font-size: 14px; }
+    </style>
+</head>
+<body class="dark">
+    <div class="container">
+        <h1>KINTH 2D Annotation System</h1>
+
+        <div style="text-align:right;margin-bottom:12px;">
+            <button onclick="toggleUploadMode()" id="toggle-upload-btn" class="toolbar-btn accent-green" style="padding:8px 20px;font-size:14px;">📁 上传文件夹</button>
+        </div>
+
+        <div class="upload-section" id="upload-section" style="display:none;">
+            <h3>上传数据集</h3>
+            <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px 0;">
+                点击下方主文件夹选中上传目标，输入子文件夹名称，选择文件即可上传。
+            </p>
+            <div style="display:flex;gap:6px;align-items:center;margin-bottom:10px;">
+                <span style="color:var(--text-dim);font-size:13px;">上传模式：</span>
+                <button id="mode-folder-btn" onclick="setUploadMode('folder')" class="btn-icon" style="background:var(--accent-blue);color:#fff;border-color:var(--accent-blue);">📁 文件夹</button>
+                <button id="mode-files-btn" onclick="setUploadMode('files')" class="btn-icon">🎬 视频 / TXT</button>
+            </div>
+            <div class="upload-row">
+                <span class="upload-target-label">目标：</span>
+                <span class="upload-target-val" id="upload-target-display">未选择</span>
+                <span style="color:var(--text-dim);">/</span>
+                <input type="text" id="subfolder-input" placeholder="子文件夹名称" style="flex:1;min-width:140px;" disabled>
+                <input type="file" id="file-input-folder" webkitdirectory directory multiple disabled>
+                <input type="file" id="file-input-files" multiple accept=".mp4,.avi,.mov,.mkv,.wmv,.flv,.ts,.m4v,.txt" disabled style="display:none;">
+                <button onclick="uploadFiles()" id="upload-btn" disabled style="padding:8px 20px;background:var(--accent-green);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:14px;font-weight:600;opacity:0.5;">上传</button>
+            </div>
+            <div id="upload-status" style="margin-top:6px;font-size:12px;"></div>
+        </div>
+
+        <div class="project-list">
+            {% for mf in main_folders %}
+            <div class="main-folder-card" id="card-{{ loop.index }}">
+                <div class="main-folder-header" onclick="onMainFolderClick('{{ mf.name }}', this, '{{ loop.index }}')">
+                    <span class="main-folder-icon">&#128193;</span>
+                    <div class="main-folder-info">
+                        <div class="main-folder-name">{{ mf.name }}</div>
+                        <div class="main-folder-meta">{{ mf.sub_count }} 个子文件夹 &middot; {{ mf.total_images }} 张图片</div>
+                    </div>
+                    <div class="main-folder-actions" onclick="event.stopPropagation()">
+                        <button class="btn-icon" title="重命名" onclick="renameProject('{{ mf.name }}')">&#9999;</button>
+                    </div>
+                    <span class="main-folder-arrow" onclick="event.stopPropagation(); toggleFolder('{{ loop.index }}')">&#9654;</span>
+                </div>
+                <div class="subfolder-list">
+                    {% for sf in mf.subfolders %}
+                    <div class="subfolder-item">
+                        <span class="subfolder-icon">&#128196;</span>
+                        <span class="subfolder-name">
+                            <a href="/annotate/{{ mf.name }}/{{ sf.name }}">{{ sf.name }}</a>
+                        </span>
+                        <span class="subfolder-count">{{ sf.count }} 张</span>
+                        <span class="subfolder-actions">
+                            <button class="btn-icon export" title="导出" onclick="event.stopPropagation(); exportSubProject('{{ mf.name }}', '{{ sf.name }}')">&#11015;</button>
+                            <button class="btn-icon" title="重命名" onclick="event.stopPropagation(); renameSubProject('{{ mf.name }}', '{{ sf.name }}')">&#9999;</button>
+                        </span>
+                    </div>
+                    {% endfor %}
+                    {% if mf.subfolders|length == 0 %}
+                    <div class="subfolder-item" style="color:var(--text-dim);cursor:default;font-size:12px;">
+                        <span>暂无子文件夹</span>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+            {% if main_folders|length == 0 %}
+            <div style="text-align:center;padding:40px;color:var(--text-dim);">
+                <p>暂无数据，请上传数据集</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <script>
+        let selectedMainFolder = null;
+        let uploadMode = 'folder';
+
+        function setUploadMode(mode) {
+            uploadMode = mode;
+            const folderInput = document.getElementById('file-input-folder');
+            const filesInput = document.getElementById('file-input-files');
+            const folderBtn = document.getElementById('mode-folder-btn');
+            const filesBtn = document.getElementById('mode-files-btn');
+
+            if (mode === 'folder') {
+                folderInput.style.display = '';
+                filesInput.style.display = 'none';
+                folderBtn.style.background = 'var(--accent-blue)';
+                folderBtn.style.color = '#fff';
+                folderBtn.style.borderColor = 'var(--accent-blue)';
+                filesBtn.style.background = '';
+                filesBtn.style.color = '';
+                filesBtn.style.borderColor = '';
+            } else {
+                folderInput.style.display = 'none';
+                filesInput.style.display = '';
+                filesBtn.style.background = 'var(--accent-blue)';
+                filesBtn.style.color = '#fff';
+                filesBtn.style.borderColor = 'var(--accent-blue)';
+                folderBtn.style.background = '';
+                folderBtn.style.color = '';
+                folderBtn.style.borderColor = '';
+            }
+            folderInput.value = '';
+            filesInput.value = '';
+            document.getElementById('upload-status').innerText = '';
+            updateUploadTarget();
+        }
+
+        function toggleUploadMode() {
+            const section = document.getElementById('upload-section');
+            const btn = document.getElementById('toggle-upload-btn');
+            const isOpen = section.style.display !== 'none';
+
+            if (isOpen) {
+                section.style.display = 'none';
+                btn.textContent = '📁 上传文件夹';
+                btn.classList.remove('accent-red');
+                btn.classList.add('accent-green');
+                // Deselect
+                selectedMainFolder = null;
+                document.querySelectorAll('.main-folder-header').forEach(h => h.style.background = '');
+                updateUploadTarget();
+            } else {
+                section.style.display = 'block';
+                btn.textContent = '✕ 退出上传';
+                btn.classList.remove('accent-green');
+                btn.classList.add('accent-red');
+                section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }
+
+        function onMainFolderClick(folderName, headerEl, idx) {
+            // In upload mode: select as target
+            const uploadSection = document.getElementById('upload-section');
+            if (uploadSection.style.display !== 'none') {
+                document.querySelectorAll('.main-folder-header').forEach(h => h.style.background = '');
+                if (selectedMainFolder === folderName) {
+                    selectedMainFolder = null;
+                } else {
+                    selectedMainFolder = folderName;
+                    headerEl.style.background = 'rgba(34,197,94,0.10)';
+                }
+                updateUploadTarget();
+            } else {
+                // Normal mode: toggle subfolder list
+                toggleFolder(idx);
+            }
+        }
+
+        document.getElementById('file-input-folder').addEventListener('change', function(e) {
+            const input = e.target;
+            const subInput = document.getElementById('subfolder-input');
+            if (input.files && input.files.length > 0 && !subInput.value) {
+                const firstFile = input.files[0];
+                const relativePath = firstFile.webkitRelativePath;
+                if (relativePath) {
+                    const parts = relativePath.split('/');
+                    // parts[0] is the top-level folder name
+                    if (parts.length >= 1 && parts[0]) subInput.value = parts[0];
+                }
+            }
+        });
+
+        function updateUploadTarget() {
+            const display = document.getElementById('upload-target-display');
+            const subInput = document.getElementById('subfolder-input');
+            const folderInput = document.getElementById('file-input-folder');
+            const filesInput = document.getElementById('file-input-files');
+            const uploadBtn = document.getElementById('upload-btn');
+
+            if (selectedMainFolder) {
+                display.textContent = selectedMainFolder;
+                display.style.color = 'var(--accent-green)';
+                subInput.disabled = false;
+                folderInput.disabled = uploadMode !== 'folder';
+                filesInput.disabled = uploadMode !== 'files';
+                uploadBtn.disabled = false;
+                uploadBtn.style.opacity = '1';
+            } else {
+                display.textContent = '未选择';
+                display.style.color = 'var(--text-dim)';
+                subInput.disabled = true;
+                subInput.value = '';
+                folderInput.disabled = true;
+                filesInput.disabled = true;
+                uploadBtn.disabled = true;
+                uploadBtn.style.opacity = '0.5';
+            }
+        }
+
+        function toggleFolder(idx) {
+            const card = document.getElementById('card-' + idx);
+            if (card) card.classList.toggle('open');
+        }
+
+        async function uploadFiles() {
+            const input = uploadMode === 'folder'
+                ? document.getElementById('file-input-folder')
+                : document.getElementById('file-input-files');
+            const subInput = document.getElementById('subfolder-input');
+            const status = document.getElementById('upload-status');
+
+            if (!selectedMainFolder) return alert("请先点击选择一个主文件夹作为上传目标");
+            if (input.files.length === 0) return alert(uploadMode === 'folder' ? "请选择要上传的文件夹" : "请选择要上传的文件");
+
+            const mainFolder = selectedMainFolder;
+            const subfolder = subInput.value.trim() || 'default';
+            const totalFiles = input.files.length;
+            const batchSize = uploadMode === 'folder' ? 20 : 1;
+            let uploadedCount = 0;
+
+            status.innerText = `准备上传 ${totalFiles} 个文件到 ${mainFolder}/${subfolder}...`;
+            status.style.color = 'var(--text-secondary)';
+
+            for (let i = 0; i < totalFiles; i += batchSize) {
+                const chunk = Array.from(input.files).slice(i, i + batchSize);
+                const formData = new FormData();
+                formData.append('main_folder', mainFolder);
+                formData.append('subfolder', subfolder);
+                const paths = [];
+                chunk.forEach(file => {
+                    formData.append('files[]', file);
+                    paths.push(file.webkitRelativePath || file.name);
+                });
+                formData.append('file_paths', JSON.stringify(paths));
+
+                try {
+                    status.innerText = `上传中 ${i + 1}-${Math.min(i + batchSize, totalFiles)} / ${totalFiles}...`;
+                    const res = await fetch('/upload', { method: 'POST', body: formData });
+                    const text = await res.text();
+                    let data;
+                    try {
+                        data = JSON.parse(text);
+                    } catch (_) {
+                        const hint = res.status === 413 ? '文件过大，请重启服务器使新配置生效' : text.slice(0, 120);
+                        status.innerText = `上传失败 (HTTP ${res.status}): ${hint}`;
+                        status.style.color = 'var(--accent-red)';
+                        return;
+                    }
+                    if (data.status !== 'success') {
+                        status.innerText = `上传出错: ` + data.error;
+                        status.style.color = 'var(--accent-red)';
+                        return;
+                    }
+                    uploadedCount += chunk.length;
+                } catch (e) {
+                    status.innerText = `网络错误: ` + e;
+                    status.style.color = 'var(--accent-red)';
+                    return;
+                }
+            }
+
+            status.innerText = "上传完成！";
+            status.style.color = 'var(--accent-green)';
+            alert(`成功上传 ${uploadedCount} 个文件到 ${mainFolder}/${subfolder}！`);
+            location.reload();
+        }
+
+        async function renameProject(oldName) {
+            const newName = prompt("请输入新的主文件夹名称:", oldName);
+            if (!newName || newName === oldName) return;
+            try {
+                const res = await fetch('/api/rename_project', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({old_name: oldName, new_name: newName, level: 'main'})
+                });
+                const data = await res.json();
+                if (data.status === 'success') { location.reload(); }
+                else { alert("重命名失败: " + (data.error || 'Unknown error')); }
+            } catch (e) { alert("Error: " + e); }
+        }
+
+        async function renameSubProject(mainFolder, oldName) {
+            const newName = prompt("请输入新的子文件夹名称:", oldName);
+            if (!newName || newName === oldName) return;
+            try {
+                const res = await fetch('/api/rename_project', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({main_folder: mainFolder, old_name: oldName, new_name: newName, level: 'sub'})
+                });
+                const data = await res.json();
+                if (data.status === 'success') { location.reload(); }
+                else { alert("重命名失败: " + (data.error || 'Unknown error')); }
+            } catch (e) { alert("Error: " + e); }
+        }
+
+        function exportSubProject(mainFolder, subfolder) {
+            window.location.href = '/api/export/' + encodeURIComponent(mainFolder) + '/' + encodeURIComponent(subfolder);
+        }
+
+        (function() {
+            const cards = document.querySelectorAll('.main-folder-card');
+            if (cards.length === 1) cards[0].classList.add('open');
+        })();
+    </script>
+</body>
+</html>
