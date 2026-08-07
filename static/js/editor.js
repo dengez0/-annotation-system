@@ -19,12 +19,8 @@ let selectedFiles = new Set(); // Set of indices of selected files for batch del
 
 // High-contrast distinct color palette (dark-background optimized)
 const DISTINCT_COLORS = [
-    '#FF4444', '#44FF44', '#4488FF', '#FFDD44', '#FF44FF',
-    '#44FFFF', '#FF8844', '#88FF44', '#FF4488', '#44FF88',
-    '#8844FF', '#FFFF44', '#FF6644', '#44FFCC', '#CC44FF',
-    '#FFCC44', '#44CCFF', '#FF4466', '#66FF44', '#FF44CC',
-    '#44FF66', '#FFAA44', '#4466FF', '#AAFF44', '#FF44AA',
-    '#44FFAA', '#FF7744', '#7744FF', '#77FF44', '#FF4477',
+    '#8B4513', '#000080', '#006400', '#FF4444', '#44FF44',
+    '#4488FF', '#FFDD44', '#FF44FF', '#44FFFF', '#FF8844',
 ];
 
 // Deterministic color from label name

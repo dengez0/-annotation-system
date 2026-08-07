@@ -6,6 +6,7 @@ from runtime import BASE_DIR, DATA_DIR, MODELS_DIR, task_manager
 from services.auto_label_llm import HAS_OPENAI, background_auto_label_llm
 from services.auto_label_sam3 import background_auto_label_sam3
 from services.auto_label_yolo import background_auto_label
+from services.work_logger import write_work_log
 
 auto_label_bp = Blueprint('auto_label', __name__)
 
@@ -43,6 +44,13 @@ def auto_label(main_folder, subfolder):
         conf,
         backend,
         custom_repo,
+    )
+    write_work_log(
+        'AUTO_LABEL_START',
+        request.remote_addr,
+        main_folder,
+        subfolder,
+        target=f'{model_name} ({backend})',
     )
     return jsonify({'status': 'started', 'task_id': task_id, 'backend': backend})
 
@@ -82,6 +90,13 @@ def auto_label_llm(main_folder, subfolder):
         sample_project,
         sample_enabled,
     )
+    write_work_log(
+        'AUTO_LABEL_LLM_START',
+        request.remote_addr,
+        main_folder,
+        subfolder,
+        target=model,
+    )
     return jsonify({'status': 'started', 'task_id': task_id})
 
 
@@ -110,5 +125,12 @@ def auto_label_sam3(main_folder, subfolder):
         sample_project_name,
         model_name,
         conf,
+    )
+    write_work_log(
+        'AUTO_LABEL_SAM3_START',
+        request.remote_addr,
+        main_folder,
+        subfolder,
+        target=model_name,
     )
     return jsonify({'status': 'started', 'task_id': task_id})

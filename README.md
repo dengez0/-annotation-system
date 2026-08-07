@@ -122,7 +122,8 @@ json初步框定/
 ├── logs/                     # 服务器日志
 │   ├── server.log            # 应用日志
 │   ├── access.log            # HTTP 访问日志（Gunicorn）
-│   └── error.log             # 错误日志（Gunicorn）
+│   ├── error.log             # 错误日志（Gunicorn）
+│   └── ip_work.log           # 按 IP 记录成功的标注与文件操作（10 MB × 30 份轮转）
 │
 └── 工具脚本/
     ├── convert_climb.py      # Climb 数据格式转换
@@ -175,6 +176,17 @@ data/
 ```
 
 ## 操作指南
+
+### IP 工作日志
+
+成功的标注保存、上传、复制、移动、删除、导出、模型和自动标注操作会写入
+`logs/ip_work.log`。每行包含时间、IP、操作、项目、目标、数量或标注框数，不包含
+图片内容、完整标注 JSON、坐标、API Key 或 Prompt。日志单文件最大 10 MB，最多
+保留 30 个历史文件，最旧文件会被自动删除。
+
+```text
+2026-08-06 09:32:11 | 192.168.1.20 | SAVE_ANNOTATION | 安全帽/上午 | 001.jpg | boxes=5 | success
+```
 
 ### 快捷键
 

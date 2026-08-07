@@ -11,6 +11,7 @@ from services.annotation_store import (
     list_subfolders as list_project_subfolders,
     save_annotation as save_annotation_file,
 )
+from services.work_logger import write_work_log
 
 
 annotation_bp = Blueprint('annotation', __name__)
@@ -64,5 +65,13 @@ def save_annotation(main_folder, subfolder):
         return jsonify({'error': 'Invalid data'}), 400
 
     save_annotation_file(DATA_DIR, main_folder, subfolder, filename, json_data)
+    shapes = json_data.get('shapes', []) if isinstance(json_data, dict) else []
+    write_work_log(
+        'SAVE_ANNOTATION',
+        request.remote_addr,
+        main_folder,
+        subfolder,
+        target=filename,
+        boxes=len(shapes) if isinstance(shapes, list) else 0,
+    )
     return jsonify({'status': 'success'})
-

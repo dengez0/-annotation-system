@@ -1,6 +1,7 @@
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 
 from runtime import task_manager
+from services.work_logger import write_work_log
 
 task_bp = Blueprint('tasks', __name__)
 
@@ -17,4 +18,5 @@ def get_task_status(task_id):
 def cancel_task(task_id):
     if not task_manager.cancel_task(task_id):
         return jsonify({'error': 'Task not found'}), 404
+    write_work_log('AUTO_LABEL_CANCEL', request.remote_addr, target=task_id)
     return jsonify({'status': 'success'})
