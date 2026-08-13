@@ -11,6 +11,15 @@ except ImportError:
 from services.constants import IMAGE_EXTENSIONS
 
 
+# Label colors are UI-only project preferences.  Keeping them outside LabelMe
+# annotation payloads preserves compatibility with existing annotations/tools.
+LABEL_COLORS_FILENAME = '.label_colors.json'
+LABEL_COLORS = {
+    '#8B4513', '#000080', '#006400', '#FF4444', '#44FF44',
+    '#4488FF', '#FFDD44', '#FF44FF', '#44FFFF', '#FF8844',
+}
+
+
 def project_path(data_dir, main_folder, subfolder):
     return os.path.join(data_dir, main_folder, subfolder)
 
@@ -34,13 +43,22 @@ def list_main_folders(data_dir):
                     f for f in os.listdir(sub_path)
                     if f.lower().endswith(IMAGE_EXTENSIONS)
                 ]
-                subfolders.append({'name': sub_name, 'count': len(images)})
+                annotated_count = sum(
+                    os.path.exists(os.path.join(sub_path, os.path.splitext(image)[0] + '.json'))
+                    for image in images
+                )
+                subfolders.append({
+                    'name': sub_name,
+                    'count': len(images),
+                    'annotated_count': annotated_count,
+                })
                 total_images += len(images)
 
         main_folders.append({
             'name': main_name,
             'subfolders': subfolders,
             'total_images': total_images,
+            'total_annotated': sum(folder['annotated_count'] for folder in subfolders),
             'sub_count': len(subfolders),
         })
 
@@ -72,7 +90,15 @@ def list_subfolders(data_dir, main_folder):
                 f for f in os.listdir(sub_path)
                 if f.lower().endswith(IMAGE_EXTENSIONS)
             ]
-            subfolders.append({'name': name, 'count': len(images)})
+            annotated_count = sum(
+                os.path.exists(os.path.join(sub_path, os.path.splitext(image)[0] + '.json'))
+                for image in images
+            )
+            subfolders.append({
+                'name': name,
+                'count': len(images),
+                'annotated_count': annotated_count,
+            })
     return subfolders
 
 
@@ -113,6 +139,42 @@ def list_labels(data_dir, main_folder, subfolder=None):
             pass
 
     return sorted(list(labels))
+
+
+def get_label_colors(data_dir, main_folder, subfolder):
+    """Return the valid, project-level label color preferences."""
+    path = os.path.join(project_path(data_dir, main_folder, subfolder), LABEL_COLORS_FILENAME)
+    if not os.path.exists(path):
+        return {}
+
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            colors = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+    if not isinstance(colors, dict):
+        return {}
+    return {
+        label: color
+        for label, color in colors.items()
+        if isinstance(label, str) and isinstance(color, str) and color.upper() in LABEL_COLORS
+    }
+
+
+def save_label_color(data_dir, main_folder, subfolder, label, color):
+    """Save one label's project-level color preference."""
+    if not isinstance(label, str) or not label.strip():
+        raise ValueError('Label is required')
+    if not isinstance(color, str) or color.upper() not in LABEL_COLORS:
+        raise ValueError('Unsupported label color')
+
+    colors = get_label_colors(data_dir, main_folder, subfolder)
+    colors[label] = color.upper()
+    path = os.path.join(project_path(data_dir, main_folder, subfolder), LABEL_COLORS_FILENAME)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(colors, f, indent=2, ensure_ascii=False, sort_keys=True)
+    return colors
 
 
 def save_annotation(data_dir, main_folder, subfolder, filename, json_data):

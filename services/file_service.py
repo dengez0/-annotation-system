@@ -133,6 +133,145 @@ def move_files(data_dir, main_folder, subfolder, filenames, dest_folder='', dest
     return {'status': 'success', 'moved': len(moved), 'errors': errors}, 200
 
 
+def move_files_to_completed(data_dir, main_folder, subfolder, filenames):
+    """Move completed annotations to moved image/<same subfolder> without overwriting."""
+    if main_folder != 'annotation flies':
+        return {'error': 'Move is only available from annotation flies'}, 403
+
+    safe_subfolder = os.path.basename(subfolder)
+    if not safe_subfolder or safe_subfolder != subfolder:
+        return {'error': 'Invalid source subfolder'}, 400
+
+    source_folder = os.path.join(data_dir, main_folder, safe_subfolder)
+    if not os.path.isdir(source_folder):
+        return {'error': 'Project not found'}, 404
+
+    destination_folder = os.path.join(data_dir, 'moved image', safe_subfolder)
+    try:
+        os.makedirs(destination_folder, exist_ok=True)
+    except OSError as exc:
+        return {'error': f'Cannot create destination folder: {exc}'}, 400
+
+    candidates = []
+    skipped = []
+    errors = []
+    for original_name in filenames:
+        filename = os.path.basename(str(original_name))
+        if not filename or filename != original_name:
+            errors.append({'name': str(original_name), 'reason': 'Invalid filename'})
+            continue
+
+        image_path = os.path.join(source_folder, filename)
+        if not os.path.isfile(image_path):
+            errors.append({'name': filename, 'reason': 'Source image not found'})
+            continue
+
+        json_name = os.path.splitext(filename)[0] + '.json'
+        json_path = os.path.join(source_folder, json_name)
+        destination_image = os.path.join(destination_folder, filename)
+        destination_json = os.path.join(destination_folder, json_name)
+        if os.path.exists(destination_image) or os.path.exists(destination_json):
+            skipped.append({'name': filename, 'reason': 'Destination already contains the image or annotation'})
+            continue
+
+        candidates.append((filename, image_path, json_path, destination_image, destination_json))
+
+    moved = []
+    for filename, image_path, json_path, destination_image, destination_json in candidates:
+        try:
+            shutil.move(image_path, destination_image)
+            if os.path.isfile(json_path):
+                try:
+                    shutil.move(json_path, destination_json)
+                except OSError as exc:
+                    # Keep a failed pair together whenever the image can be restored.
+                    try:
+                        shutil.move(destination_image, image_path)
+                    except OSError:
+                        pass
+                    errors.append({'name': filename, 'reason': f'Annotation move failed: {exc}'})
+                    continue
+            moved.append(filename)
+        except OSError as exc:
+            errors.append({'name': filename, 'reason': f'Image move failed: {exc}'})
+
+    return {
+        'status': 'success',
+        'destination': f'moved image/{safe_subfolder}',
+        'moved': len(moved),
+        'skipped': skipped,
+        'errors': errors,
+    }, 200
+
+
+def restore_files_from_completed(data_dir, subfolder, filenames):
+    """Restore moved images to annotation flies/<same subfolder> without overwriting."""
+    safe_subfolder = os.path.basename(subfolder)
+    if not safe_subfolder or safe_subfolder != subfolder:
+        return {'error': 'Invalid source subfolder'}, 400
+
+    source_folder = os.path.join(data_dir, 'moved image', safe_subfolder)
+    if not os.path.isdir(source_folder):
+        return {'error': 'Moved project not found'}, 404
+
+    destination_folder = os.path.join(data_dir, 'annotation flies', safe_subfolder)
+    try:
+        os.makedirs(destination_folder, exist_ok=True)
+    except OSError as exc:
+        return {'error': f'Cannot create destination folder: {exc}'}, 400
+
+    candidates = []
+    skipped = []
+    errors = []
+    for original_name in filenames:
+        filename = os.path.basename(str(original_name))
+        if not filename or filename != original_name:
+            errors.append({'name': str(original_name), 'reason': 'Invalid filename'})
+            continue
+
+        image_path = os.path.join(source_folder, filename)
+        if not os.path.isfile(image_path):
+            errors.append({'name': filename, 'reason': 'Source image not found'})
+            continue
+
+        json_name = os.path.splitext(filename)[0] + '.json'
+        json_path = os.path.join(source_folder, json_name)
+        destination_image = os.path.join(destination_folder, filename)
+        destination_json = os.path.join(destination_folder, json_name)
+        if os.path.exists(destination_image) or os.path.exists(destination_json):
+            skipped.append({'name': filename, 'reason': 'Destination already contains the image or annotation'})
+            continue
+
+        candidates.append((filename, image_path, json_path, destination_image, destination_json))
+
+    moved = []
+    for filename, image_path, json_path, destination_image, destination_json in candidates:
+        try:
+            shutil.move(image_path, destination_image)
+            if os.path.isfile(json_path):
+                try:
+                    shutil.move(json_path, destination_json)
+                except OSError as exc:
+                    # Keep a failed pair together whenever the image can be restored.
+                    try:
+                        shutil.move(destination_image, image_path)
+                    except OSError:
+                        pass
+                    errors.append({'name': filename, 'reason': f'Annotation move failed: {exc}'})
+                    continue
+            moved.append(filename)
+        except OSError as exc:
+            errors.append({'name': filename, 'reason': f'Image move failed: {exc}'})
+
+    return {
+        'status': 'success',
+        'destination': f'annotation flies/{safe_subfolder}',
+        'moved': len(moved),
+        'skipped': skipped,
+        'errors': errors,
+    }, 200
+
+
 def copy_files_to_paste(data_dir, main_folder, subfolder, filenames):
     project_path = os.path.join(data_dir, main_folder, subfolder)
     if not os.path.exists(project_path):

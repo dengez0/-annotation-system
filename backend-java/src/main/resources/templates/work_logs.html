@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <title>工作日志总览</title>
+    <link rel="stylesheet" href="/static/css/style.css?v=6">
+</head>
+<body class="dark">
+    <main class="work-log-page">
+        <header class="work-log-header">
+            <div>
+                <a class="work-log-back" href="/">← 返回菜单页</a>
+                <h1>工作日志总览</h1>
+                <p>按 IP 汇总标注工作量与最近操作。</p>
+            </div>
+            <button id="refresh-logs" class="toolbar-btn accent-blue">↻ 刷新数据</button>
+        </header>
+
+        <section class="work-log-filters" aria-label="日志筛选">
+            <div class="range-buttons" id="range-buttons">
+                <button type="button" class="range-btn active" data-range="today">今天</button>
+                <button type="button" class="range-btn" data-range="yesterday">昨天</button>
+                <button type="button" class="range-btn" data-range="7d">近 7 天</button>
+                <button type="button" class="range-btn" data-range="all">全部历史</button>
+            </div>
+            <label>选择日期 <input id="filter-date" type="date" aria-label="选择近 7 天内的日期"></label>
+            <label>IP <select id="filter-ip"><option value="">全部 IP</option></select></label>
+            <label>项目 <select id="filter-project"><option value="">全部项目</option></select></label>
+            <label>操作 <select id="filter-action"><option value="">全部操作</option></select></label>
+        </section>
+
+        <section class="work-log-summary" aria-label="工作汇总">
+            <article><span>活跃 IP</span><strong id="summary-ips">-</strong></article>
+            <article><span title="已标注图片去重数 + 成功移动图片数">标注/移动图片数</span><strong id="summary-images">-</strong></article>
+            <article><span>保存次数</span><strong id="summary-saves">-</strong></article>
+            <article><span>标注框数</span><strong id="summary-boxes">-</strong></article>
+        </section>
+
+        <section class="work-log-panel">
+            <div class="work-log-panel-title"><h2>人员工作量排行</h2><span id="ranking-note"></span></div>
+            <div class="work-log-table-wrap">
+                <table class="work-log-table">
+                    <thead><tr><th>IP</th><th>标注/移动图片数</th><th>保存次数</th><th>标注框数</th><th>最近活动</th><th></th></tr></thead>
+                    <tbody id="ranking-body"></tbody>
+                </table>
+            </div>
+            <p id="work-log-empty" class="work-log-empty" hidden>当前筛选条件下没有日志记录。</p>
+        </section>
+    </main>
+
+    <script th:inline="none">
+        const state = { range: 'today', date: '', ip: '', project: '', action: '' };
+        const actionLabels = {
+            SAVE_ANNOTATION: '保存标注', UPLOAD: '上传文件', RENAME_PROJECT: '重命名项目',
+            DELETE_PROJECT: '删除项目', DELETE_FILES: '删除文件', MOVE_FILES: '移动文件', RESTORE_FILES: '恢复文件',
+            COPY_FILES: '复制文件', CREATE_EMPTY_JSONS: '创建空标注', EXPORT_YOLO: '导出 YOLO',
+            EXPORT_PROJECT: '导出项目', UPLOAD_MODEL: '上传模型', DELETE_MODEL: '删除模型',
+            AUTO_LABEL_START: '自动标注开始', AUTO_LABEL_LLM_START: 'LLM 自动标注开始',
+            AUTO_LABEL_SAM3_START: 'SAM3 自动标注开始', AUTO_LABEL_CANCEL: '取消自动标注'
+        };
+
+        function apiParams(extra = {}) {
+            const params = new URLSearchParams({range: state.range, ...extra});
+            if (state.date) params.set('date', state.date);
+            if (state.ip) params.set('ip', state.ip);
+            if (state.project) params.set('project', state.project);
+            if (state.action) params.set('action', state.action);
+            return params;
+        }
+        function actionName(action) { return actionLabels[action] || action.replaceAll('_', ' '); }
+        function replaceOptions(select, values, placeholder, format = value => value) {
+            const current = select.value;
+            select.replaceChildren(new Option(placeholder, ''));
+            values.forEach(value => select.add(new Option(format(value), value)));
+            select.value = values.includes(current) ? current : '';
+        }
+        function addCell(row, value) {
+            const cell = document.createElement('td');
+            cell.textContent = value;
+            row.appendChild(cell);
+        }
+
+        async function loadOverview() {
+            const refreshButton = document.getElementById('refresh-logs');
+            refreshButton.disabled = true;
+            refreshButton.textContent = '加载中…';
+            try {
+                const response = await fetch('/api/work-logs/overview?' + apiParams());
+                if (!response.ok) throw new Error('无法读取日志数据');
+                const data = await response.json();
+                document.getElementById('summary-ips').textContent = data.summary.active_ips;
+                document.getElementById('summary-images').textContent = data.summary.images;
+                document.getElementById('summary-saves').textContent = data.summary.saves;
+                document.getElementById('summary-boxes').textContent = data.summary.boxes;
+                replaceOptions(document.getElementById('filter-ip'), data.filters.ips, '全部 IP');
+                replaceOptions(document.getElementById('filter-project'), data.filters.projects, '全部项目');
+                replaceOptions(document.getElementById('filter-action'), data.filters.actions, '全部操作', actionName);
+                renderRanking(data.ranking);
+            } catch (error) {
+                document.getElementById('ranking-note').textContent = '加载失败，请重试。';
+                console.error(error);
+            } finally {
+                refreshButton.disabled = false;
+                refreshButton.textContent = '↻ 刷新数据';
+            }
+        }
+
+        function renderRanking(ranking) {
+            const body = document.getElementById('ranking-body');
+            body.replaceChildren();
+            document.getElementById('work-log-empty').hidden = ranking.length !== 0;
+            document.getElementById('ranking-note').textContent = ranking.length ? `${ranking.length} 个 IP` : '';
+            ranking.forEach(item => {
+                const row = document.createElement('tr');
+                row.className = 'worker-row';
+                addCell(row, item.ip); addCell(row, item.images); addCell(row, item.saves); addCell(row, item.boxes); addCell(row, item.last_activity);
+                const actionCell = document.createElement('td');
+                const button = document.createElement('button');
+                button.className = 'detail-button'; button.textContent = '查看明细';
+                button.onclick = () => toggleDetail(item.ip, row, button);
+                actionCell.appendChild(button); row.appendChild(actionCell); body.appendChild(row);
+            });
+        }
+
+        async function toggleDetail(ip, row, button) {
+            const next = row.nextElementSibling;
+            if (next && next.classList.contains('worker-detail-row')) {
+                next.remove(); button.textContent = '查看明细'; return;
+            }
+            document.querySelectorAll('.worker-detail-row').forEach(detail => detail.remove());
+            document.querySelectorAll('.detail-button').forEach(item => item.textContent = '查看明细');
+            button.textContent = '加载中…';
+            try {
+                const response = await fetch('/api/work-logs/ip/' + encodeURIComponent(ip) + '?' + apiParams());
+                if (!response.ok) throw new Error('无法读取 IP 明细');
+                const detail = await response.json();
+                const detailRow = document.createElement('tr'); detailRow.className = 'worker-detail-row';
+                const detailCell = document.createElement('td'); detailCell.colSpan = 6;
+                detailCell.appendChild(buildDetail(detail)); detailRow.appendChild(detailCell); row.after(detailRow);
+                button.textContent = '收起明细';
+            } catch (error) {
+                button.textContent = '查看明细'; console.error(error);
+            }
+        }
+
+        function buildDetail(detail) {
+            const container = document.createElement('div'); container.className = 'worker-detail';
+            const heading = document.createElement('h3'); heading.textContent = `${detail.ip} 的工作明细`; container.appendChild(heading);
+            const projects = document.createElement('div'); projects.className = 'project-breakdown';
+            const projectTitle = document.createElement('h4'); projectTitle.textContent = '项目分布'; projects.appendChild(projectTitle);
+            if (!detail.projects.length) projects.append('暂无项目记录');
+            detail.projects.forEach(project => {
+                const item = document.createElement('div');
+                item.textContent = `${project.project} · 图片 ${project.images} 张（标注 ${project.annotated_images} + 移动 ${project.moved_images}）· 保存 ${project.saves} 次 · ${project.boxes} 框 · 操作 ${project.actions} 次`;
+                projects.appendChild(item);
+            });
+            container.appendChild(projects);
+            const timeline = document.createElement('div'); timeline.className = 'work-timeline';
+            const timelineTitle = document.createElement('h4'); timelineTitle.textContent = `操作时间线（最近 ${detail.events.length} / ${detail.event_count} 条）`; timeline.appendChild(timelineTitle);
+            detail.events.forEach(event => {
+                const item = document.createElement('div'); item.className = 'timeline-item';
+                const quantity = event.boxes ? ` · ${event.boxes} 框` : event.count ? ` · ${event.count} 个` : '';
+                item.textContent = `${event.timestamp} · ${actionName(event.action)} · ${event.project} · ${event.target}${quantity}`;
+                timeline.appendChild(item);
+            });
+            container.appendChild(timeline); return container;
+        }
+
+        function formatDate(date) {
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            return `${date.getFullYear()}-${month}-${day}`;
+        }
+
+        const dateInput = document.getElementById('filter-date');
+        const today = new Date();
+        const earliestDate = new Date(today);
+        earliestDate.setDate(today.getDate() - 6);
+        dateInput.min = formatDate(earliestDate);
+        dateInput.max = formatDate(today);
+
+        dateInput.addEventListener('change', event => {
+            if (!event.target.value) return;
+            state.range = 'date'; state.date = event.target.value;
+            state.ip = state.project = state.action = '';
+            document.querySelectorAll('.range-btn').forEach(item => item.classList.remove('active'));
+            loadOverview();
+        });
+
+        document.getElementById('range-buttons').addEventListener('click', event => {
+            const button = event.target.closest('[data-range]'); if (!button) return;
+            state.range = button.dataset.range; state.date = ''; state.ip = state.project = state.action = '';
+            dateInput.value = '';
+            document.querySelectorAll('.range-btn').forEach(item => item.classList.toggle('active', item === button)); loadOverview();
+        });
+        [['filter-ip', 'ip'], ['filter-project', 'project'], ['filter-action', 'action']].forEach(([id, key]) => {
+            document.getElementById(id).addEventListener('change', event => { state[key] = event.target.value; loadOverview(); });
+        });
+        document.getElementById('refresh-logs').addEventListener('click', loadOverview); loadOverview();
+    </script>
+</body>
+</html>

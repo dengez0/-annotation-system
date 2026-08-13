@@ -1,0 +1,110 @@
+package com.simplelabel.service;
+
+import com.simplelabel.config.AppPaths;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.List;
+import java.util.Map;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+class WorkLogReadServiceTest {
+    private static final DateTimeFormatter FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+    @TempDir
+    Path root;
+
+    @Test
+    void todayStartsAtMidnightAndYesterdayEndsAtTodayMidnight() throws Exception {
+        WorkLogReadService reader = reader();
+        LocalDateTime now = LocalDateTime.of(2026, 8, 11, 14, 0);
+        writeLines(
+                line(LocalDateTime.of(2026, 8, 10, 23, 59), "10.0.0.1", "old.jpg", 1),
+                line(LocalDateTime.of(2026, 8, 11, 0, 0), "10.0.0.1", "today.jpg", 2)
+        );
+
+        List<WorkLogReadService.Event> today = reader.filter("today", null, null, null, null, now);
+        List<WorkLogReadService.Event> yesterday = reader.filter("yesterday", null, null, null, null, now);
+
+        assertThat(today).extracting(WorkLogReadService.Event::target).containsExactly("today.jpg");
+        assertThat(yesterday).extracting(WorkLogReadService.Event::target).containsExactly("old.jpg");
+    }
+
+    @Test
+    void overviewCountsDistinctImagesSeparatelyFromSaveOperations() throws Exception {
+        WorkLogReadService reader = reader();
+        LocalDateTime now = LocalDateTime.now();
+        writeLines(
+                line(now.minusMinutes(3), "10.0.0.1", "same.jpg", 2),
+                line(now.minusMinutes(2), "10.0.0.1", "same.jpg", 3),
+                line(now.minusMinutes(1), "10.0.0.1", "other.jpg", 1)
+        );
+
+        Map<String, Object> result = reader.overview("today", null, null, null, null);
+        Map<?, ?> summary = (Map<?, ?>) result.get("summary");
+
+        assertThat(summary.get("images")).isEqualTo(2);
+        assertThat(summary.get("saves")).isEqualTo(3);
+        assertThat(summary.get("boxes")).isEqualTo(6);
+    }
+
+    @Test
+    void overviewAddsOnlyConfirmedMoveCountsToAnnotationImages() throws Exception {
+        WorkLogReadService reader = reader();
+        LocalDateTime now = LocalDateTime.now();
+        writeLines(
+                line(now.minusMinutes(3), "10.0.0.1", "same.jpg", 2),
+                line(now.minusMinutes(2), "10.0.0.1", "other.jpg", 1),
+                moveLine(now.minusMinutes(1), "10.0.0.1", "MOVE_FILES", 3),
+                moveLine(now, "10.0.0.1", "RESTORE_FILES", 5)
+        );
+
+        Map<String, Object> result = reader.overview("today", null, null, null, null);
+        Map<?, ?> summary = (Map<?, ?>) result.get("summary");
+        Map<?, ?> worker = ((List<Map<?, ?>>) result.get("ranking")).getFirst();
+
+        assertThat(summary.get("annotated_images")).isEqualTo(2);
+        assertThat(summary.get("moved_images")).isEqualTo(3);
+        assertThat(summary.get("images")).isEqualTo(5);
+        assertThat(worker.get("annotated_images")).isEqualTo(2);
+        assertThat(worker.get("moved_images")).isEqualTo(3);
+        assertThat(worker.get("images")).isEqualTo(5);
+    }
+
+    @Test
+    void selectedDateMustStayWithinSevenCalendarDays() throws Exception {
+        WorkLogReadService reader = reader();
+        assertThatThrownBy(() -> reader.filter("date", "2026-08-04", null, null, null,
+                LocalDateTime.of(2026, 8, 11, 12, 0)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("last 7 days");
+    }
+
+    private WorkLogReadService reader() throws Exception {
+        Files.createDirectories(root.resolve("data"));
+        Files.createDirectories(root.resolve("models"));
+        Files.createDirectories(root.resolve("logs"));
+        return new WorkLogReadService(new WorkLogService(new AppPaths(root.toString())));
+    }
+
+    private void writeLines(String... lines) throws Exception {
+        Files.write(root.resolve("logs").resolve("ip_work.log"), List.of(lines), StandardCharsets.UTF_8);
+    }
+
+    private static String line(LocalDateTime time, String ip, String target, int boxes) {
+        return time.format(FORMAT) + " | " + ip + " | SAVE_ANNOTATION | annotation flies/shift | "
+                + target + " | boxes=" + boxes + " | success";
+    }
+
+    private static String moveLine(LocalDateTime time, String ip, String action, int count) {
+        return time.format(FORMAT) + " | " + ip + " | " + action + " | annotation flies/shift | files | count="
+                + count + " | success";
+    }
+}

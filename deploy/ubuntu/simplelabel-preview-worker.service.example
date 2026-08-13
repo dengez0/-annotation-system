@@ -1,0 +1,33 @@
+[Unit]
+Description=SimpleLabel Preview YOLO Worker
+After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=simplelabel
+Group=simplelabel
+WorkingDirectory=/opt/simplelabel/current
+EnvironmentFile=/etc/simplelabel/simplelabel-preview.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=YOLO_CONFIG_DIR=/tmp/simplelabel-preview-cache/ultralytics
+Environment=MPLCONFIGDIR=/tmp/simplelabel-preview-cache/matplotlib
+Environment=TORCH_HOME=/tmp/simplelabel-preview-cache/torch
+Environment=XDG_CACHE_HOME=/tmp/simplelabel-preview-cache
+ExecStartPre=/usr/bin/bash /opt/simplelabel/current/deploy/ubuntu/validate_runtime_env.sh
+ExecStart=/opt/simplelabel/runtime/.venv/bin/python /opt/simplelabel/current/yolo-worker/worker.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/srv/simplelabel-preview/data /srv/simplelabel-preview/models
+MemoryMax=6G
+CPUQuota=200%
+Nice=10
+IOWeight=25
+
+[Install]
+WantedBy=multi-user.target

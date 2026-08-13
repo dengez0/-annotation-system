@@ -3,6 +3,7 @@ from routes.auto_label_routes import auto_label_bp
 from routes.file_routes import file_bp
 from routes.model_routes import model_bp
 from routes.task_routes import task_bp
+from routes.work_log_routes import work_log_bp
 
 
 def register_blueprints(app):
@@ -11,4 +12,4 @@ def register_blueprints(app):
     app.register_blueprint(model_bp)
     app.register_blueprint(task_bp)
     app.register_blueprint(auto_label_bp)
-
+    app.register_blueprint(work_log_bp)

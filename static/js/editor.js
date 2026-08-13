@@ -16,6 +16,7 @@ let projectLabels = new Set(); // Stores all unique labels
 let pendingShape = null; // Temporary shape before labeling
 let activeLabel = null; // Pre-selected label for drawing (X-AnyLabeling style)
 let selectedFiles = new Set(); // Set of indices of selected files for batch delete
+let labelColors = new Map(); // Project-level label -> chosen color
 
 // High-contrast distinct color palette (dark-background optimized)
 const DISTINCT_COLORS = [
@@ -25,6 +26,9 @@ const DISTINCT_COLORS = [
 
 // Deterministic color from label name
 function getLabelColor(label) {
+    const savedColor = labelColors.get(label);
+    if (savedColor) return savedColor;
+
     let hash = 0;
     for (let i = 0; i < label.length; i++) {
         hash = ((hash << 5) - hash) + label.charCodeAt(i);
@@ -32,6 +36,79 @@ function getLabelColor(label) {
     }
     return DISTINCT_COLORS[Math.abs(hash) % DISTINCT_COLORS.length];
 }
+
+async function loadLabelColors() {
+    try {
+        const res = await fetch('/api/label-colors/' + PROJECT_KEY);
+        if (!res.ok) throw new Error('Failed to load label colors');
+        const colors = await res.json();
+        labelColors = new Map(Object.entries(colors));
+        renderClassList();
+        draw();
+    } catch (e) {
+        console.warn('Label color load warning:', e);
+    }
+}
+
+function closeColorPicker() {
+    document.querySelectorAll('.label-color-picker').forEach(picker => picker.remove());
+}
+
+function showColorPicker(label, swatch) {
+    closeColorPicker();
+
+    const picker = document.createElement('div');
+    picker.className = 'label-color-picker';
+    picker.setAttribute('role', 'dialog');
+    picker.setAttribute('aria-label', 'Choose color for ' + label);
+
+    DISTINCT_COLORS.forEach(color => {
+        const option = document.createElement('button');
+        option.type = 'button';
+        option.className = 'label-color-option' + (getLabelColor(label) === color ? ' selected' : '');
+        option.style.backgroundColor = color;
+        option.title = color;
+        option.setAttribute('aria-label', color);
+        option.onclick = (event) => {
+            event.stopPropagation();
+            closeColorPicker();
+            saveLabelColor(label, color);
+        };
+        picker.appendChild(option);
+    });
+
+    document.body.appendChild(picker);
+    const bounds = swatch.getBoundingClientRect();
+    picker.style.left = Math.min(bounds.left, window.innerWidth - picker.offsetWidth - 8) + 'px';
+    picker.style.top = Math.min(bounds.bottom + 6, window.innerHeight - picker.offsetHeight - 8) + 'px';
+}
+
+async function saveLabelColor(label, color) {
+    const previousColor = labelColors.get(label);
+    labelColors.set(label, color);
+    renderClassList();
+    draw();
+
+    try {
+        const res = await fetch('/api/label-colors/' + PROJECT_KEY, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({label, color})
+        });
+        if (!res.ok) throw new Error('Failed to save label color');
+    } catch (e) {
+        if (previousColor) {
+            labelColors.set(label, previousColor);
+        } else {
+            labelColors.delete(label);
+        }
+        renderClassList();
+        draw();
+        console.warn('Label color save warning:', e);
+    }
+}
+
+document.addEventListener('click', closeColorPicker);
 
 // Dragging variables
 let isDragging = false;
@@ -103,6 +180,9 @@ async function init() {
                 renderClassList();
             })
             .catch(e => console.warn("Background label load warning:", e));
+
+        // Color preferences are independent of annotation data and can load in parallel.
+        loadLabelColors();
 
     } catch (e) {
         console.error("Initialization error:", e);
@@ -368,6 +448,11 @@ function renderClassList() {
         const swatch = document.createElement('span');
         swatch.className = 'label-color-swatch';
         swatch.style.backgroundColor = getLabelColor(label);
+        swatch.title = 'Choose label color';
+        swatch.onclick = (event) => {
+            event.stopPropagation();
+            showColorPicker(label, swatch);
+        };
 
         const text = document.createElement('span');
         text.innerText = label;
@@ -704,92 +789,58 @@ async function deleteSelectedFiles() {
     }
 }
 
-// ── Move selected files ──
+// ── Move selected completed files ──
 
-let moveSelectedSubfolder = '';
+let fileTransferMode = 'move';
 
 function openMoveFilesModal() {
+    if (MAIN_FOLDER !== 'annotation flies') {
+        alert('Move is only available in annotation flies.');
+        return;
+    }
     if (selectedFiles.size === 0) {
         alert('请先在左侧文件列表勾选要移动的图片');
         return;
     }
 
     const modal = document.getElementById('move-files-modal');
-    const countEl = document.getElementById('move-file-count');
-    const listDiv = document.getElementById('move-subfolder-list');
-    const newInput = document.getElementById('move-new-subfolder');
-    const selectedDisplay = document.getElementById('move-selected-display');
-    const resultDiv = document.getElementById('move-result');
-    const executeBtn = document.getElementById('move-execute-btn');
-
     if (!modal) return;
-
-    moveSelectedSubfolder = '';
-    countEl.textContent = selectedFiles.size;
-    newInput.value = '';
-    selectedDisplay.style.display = 'none';
-    selectedDisplay.textContent = '';
+    fileTransferMode = 'move';
+    modal.querySelector('.modal-header').textContent = 'Move Selected Files';
+    document.getElementById('move-file-count').textContent = selectedFiles.size;
+    document.getElementById('move-selected-display').textContent = '→ moved image / ' + SUBFOLDER;
+    const resultDiv = document.getElementById('move-result');
     resultDiv.style.display = 'none';
     resultDiv.textContent = '';
-    executeBtn.disabled = true;
-    listDiv.innerHTML = '<div style="padding:12px;text-align:center;color:var(--text-dim);">Loading...</div>';
-
+    const executeBtn = document.getElementById('move-execute-btn');
+    executeBtn.disabled = false;
+    executeBtn.textContent = 'Confirm Move';
     modal.style.display = 'block';
+}
 
-    // Fetch subfolders under "moved image"
-    fetch('/api/subfolders/' + encodeURIComponent('moved image'))
-        .then(r => r.json())
-        .then(subfolders => {
-            listDiv.innerHTML = '';
-            if (subfolders.length === 0) {
-                listDiv.innerHTML = '<div style="padding:12px;text-align:center;color:var(--text-dim);">No subfolders found. Create a new one below.</div>';
-                return;
-            }
-            subfolders.forEach(sf => {
-                const item = document.createElement('div');
-                item.style.cssText = 'display:flex;align-items:center;padding:8px 12px;cursor:pointer;border-bottom:1px solid rgba(128,128,128,0.08);transition:background 0.15s;';
-                item.innerHTML = '<span style="font-size:14px;margin-right:8px;">📁</span><span style="flex:1;font-size:13px;">' + sf.name + '</span><span style="font-size:11px;color:var(--text-dim);">' + sf.count + ' files</span>';
-                item.onmouseenter = () => { if (!item.classList.contains('move-selected')) item.style.background = 'var(--bg-hover)'; };
-                item.onmouseleave = () => { if (!item.classList.contains('move-selected')) item.style.background = ''; };
-                item.onclick = () => {
-                    document.querySelectorAll('#move-subfolder-list > div').forEach(d => { d.classList.remove('move-selected'); d.style.background = ''; });
-                    item.classList.add('move-selected');
-                    item.style.background = 'rgba(34,197,94,0.12)';
-                    moveSelectedSubfolder = sf.name;
-                    newInput.value = '';
-                    selectedDisplay.style.display = 'block';
-                    selectedDisplay.textContent = '→ moved image / ' + sf.name;
-                    executeBtn.disabled = false;
-                };
-                listDiv.appendChild(item);
-            });
-        })
-        .catch(() => {
-            listDiv.innerHTML = '<div style="padding:12px;text-align:center;color:var(--accent-red);">Failed to load subfolders</div>';
-        });
+function openRestoreFilesModal() {
+    if (MAIN_FOLDER !== 'moved image') {
+        alert('Restore is only available in moved image.');
+        return;
+    }
+    if (selectedFiles.size === 0) {
+        alert('请先在左侧文件列表勾选要恢复的图片');
+        return;
+    }
 
-    // New subfolder input: typing enables the move button
-    newInput.oninput = () => {
-        const val = newInput.value.trim();
-        if (val) {
-            moveSelectedSubfolder = val;
-            document.querySelectorAll('#move-subfolder-list > div').forEach(d => { d.classList.remove('move-selected'); d.style.background = ''; });
-            selectedDisplay.style.display = 'block';
-            selectedDisplay.textContent = '→ moved image / ' + val + ' (new)';
-            executeBtn.disabled = false;
-        } else if (!moveSelectedSubfolder || moveSelectedSubfolder === val) {
-            // If field is cleared, revert to list selection or disable
-            const selected = document.querySelector('#move-subfolder-list > div.move-selected');
-            if (selected) {
-                moveSelectedSubfolder = selected.querySelector('span:nth-child(2)').textContent;
-                selectedDisplay.textContent = '→ moved image / ' + moveSelectedSubfolder;
-            } else {
-                moveSelectedSubfolder = '';
-                selectedDisplay.style.display = 'none';
-                executeBtn.disabled = true;
-            }
-        }
-    };
+    const modal = document.getElementById('move-files-modal');
+    if (!modal) return;
+    fileTransferMode = 'restore';
+    modal.querySelector('.modal-header').textContent = 'Restore Selected Files';
+    document.getElementById('move-file-count').textContent = selectedFiles.size;
+    document.getElementById('move-selected-display').textContent = '→ annotation flies / ' + SUBFOLDER;
+    const resultDiv = document.getElementById('move-result');
+    resultDiv.style.display = 'none';
+    resultDiv.textContent = '';
+    const executeBtn = document.getElementById('move-execute-btn');
+    executeBtn.disabled = false;
+    executeBtn.textContent = 'Confirm Restore';
+    modal.style.display = 'block';
 }
 
 function closeMoveFilesModal() {
@@ -798,13 +849,10 @@ function closeMoveFilesModal() {
 }
 
 async function executeMoveFiles() {
-    if (!moveSelectedSubfolder) {
-        alert('Please select or enter a destination subfolder.');
-        return;
-    }
-
     const resultDiv = document.getElementById('move-result');
     const executeBtn = document.getElementById('move-execute-btn');
+    const isRestore = fileTransferMode === 'restore';
+    const actionLabel = isRestore ? 'Restore' : 'Move';
 
     const filenames = [];
     selectedFiles.forEach(idx => {
@@ -816,29 +864,33 @@ async function executeMoveFiles() {
     if (filenames.length === 0) return;
 
     executeBtn.disabled = true;
-    executeBtn.textContent = 'Moving...';
+    executeBtn.textContent = isRestore ? 'Restoring...' : 'Moving...';
     resultDiv.style.display = 'block';
     resultDiv.style.color = 'var(--text-secondary)';
-    resultDiv.textContent = 'Moving ' + filenames.length + ' file(s)...';
+    resultDiv.textContent = (isRestore ? 'Restoring ' : 'Moving ') + filenames.length + ' file(s)...';
 
     try {
-        const res = await fetch('/api/move_files/' + PROJECT_KEY, {
+        const url = isRestore
+            ? '/api/restore_from_completed/' + encodeURIComponent(SUBFOLDER)
+            : '/api/move_to_completed/' + PROJECT_KEY;
+        const res = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                filenames: filenames,
-                dest_main_folder: 'moved image',
-                dest_subfolder: moveSelectedSubfolder
-            })
+            body: JSON.stringify({filenames: filenames})
         });
         const result = await res.json();
 
         if (result.status === 'success') {
             resultDiv.style.color = 'var(--accent-green)';
-            resultDiv.textContent = 'Successfully moved ' + result.moved + ' file(s) to moved image/' + moveSelectedSubfolder;
-
-            if (result.errors && result.errors.length > 0) {
-                resultDiv.textContent += ' Errors: ' + result.errors.join(', ');
+            resultDiv.textContent = (isRestore ? 'Restored ' : 'Moved ') + result.moved + ' file(s) to ' + result.destination + '.';
+            const skipped = result.skipped || [];
+            const errors = result.errors || [];
+            if (skipped.length > 0) {
+                resultDiv.textContent += ' Skipped: ' + skipped.map(item => item.name + ' (' + item.reason + ')').join(', ') + '.';
+            }
+            if (errors.length > 0) {
+                resultDiv.style.color = 'var(--accent-red)';
+                resultDiv.textContent += ' Errors: ' + errors.map(item => item.name + ' (' + item.reason + ')').join(', ') + '.';
             }
 
             const currentName = images[currentImageIndex] ? images[currentImageIndex].name : null;
@@ -873,19 +925,22 @@ async function executeMoveFiles() {
                     renderClassList();
                 });
 
-            // Close after delay
-            setTimeout(() => closeMoveFilesModal(), 1500);
+            if (skipped.length === 0 && errors.length === 0) {
+                setTimeout(() => closeMoveFilesModal(), 1500);
+            } else {
+                executeBtn.textContent = actionLabel + ' Complete';
+            }
         } else {
             resultDiv.style.color = 'var(--accent-red)';
             resultDiv.textContent = 'Error: ' + (result.error || 'Unknown error');
             executeBtn.disabled = false;
-            executeBtn.textContent = 'Move';
+            executeBtn.textContent = actionLabel;
         }
     } catch (e) {
         resultDiv.style.color = 'var(--accent-red)';
         resultDiv.textContent = 'Request failed: ' + e.message;
         executeBtn.disabled = false;
-        executeBtn.textContent = 'Move';
+        executeBtn.textContent = actionLabel;
     }
 }
 
@@ -1670,33 +1725,41 @@ async function createEmptyJsons() {
 
 // === YOLO Export ===
 
+let yoloAvailableLabels = [];
+let yoloSelectedLabels = [];
+
 async function openExportYoloModal() {
     const modal = document.getElementById('export-yolo-modal');
     if (!modal) return;
     modal.style.display = 'flex';
 
-    const container = document.getElementById('yolo-label-checkboxes');
-    if (!container) return;
-    container.innerHTML = '<div style="padding:10px;color:var(--text-dim);text-align:center;width:100%;">Loading...</div>';
+    await loadYoloExportLabels();
+}
 
-    // Fetch all labels used in this project
+async function loadYoloExportLabels() {
+    const unselectedContainer = document.getElementById('yolo-unselected-labels');
+    const selectedContainer = document.getElementById('yolo-selected-labels');
+    if (!unselectedContainer || !selectedContainer) return;
+
+    yoloAvailableLabels = [];
+    yoloSelectedLabels = [];
+    unselectedContainer.innerHTML = '<div class="yolo-order-message">Loading...</div>';
+    selectedContainer.innerHTML = '<div class="yolo-order-message">Click a label above to start ordering.</div>';
+    updateYoloOrderControls();
+
     try {
         const res = await fetch('/api/labels/' + PROJECT_KEY);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const labels = await res.json();
-        container.innerHTML = '';
-        if (labels.length === 0) {
-            container.innerHTML = '<div style="padding:10px;color:var(--text-dim);text-align:center;width:100%;">No labels found in project</div>';
-            return;
-        }
-        for (const label of labels) {
-            const labelEl = document.createElement('label');
-            labelEl.style.cssText = 'display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-primary);cursor:pointer;padding:3px 8px;border:1px solid var(--border-color);border-radius:3px;white-space:nowrap;';
-            labelEl.innerHTML = `<input type="checkbox" class="yolo-label-cb" value="${label}" checked> ${label}`;
-            container.appendChild(labelEl);
-        }
-        document.getElementById('yolo-select-all').checked = true;
+        if (!Array.isArray(labels)) throw new Error('Invalid label response');
+        yoloAvailableLabels = labels.filter(label => typeof label === 'string');
+        renderYoloLabelOrder();
     } catch (e) {
-        container.innerHTML = '<div style="color:red;padding:10px;">Error loading labels</div>';
+        yoloAvailableLabels = [];
+        yoloSelectedLabels = [];
+        unselectedContainer.innerHTML = '<div class="yolo-order-message" style="color:var(--accent-red);">Error loading labels</div>';
+        selectedContainer.innerHTML = '<div class="yolo-order-message">Export is unavailable.</div>';
+        updateYoloOrderControls();
     }
 }
 
@@ -1705,18 +1768,101 @@ function closeExportYoloModal() {
     if (modal) modal.style.display = 'none';
 }
 
-function toggleSelectAllYolo(checked) {
-    document.querySelectorAll('.yolo-label-cb').forEach(cb => cb.checked = checked);
+function selectYoloLabel(label) {
+    if (!yoloAvailableLabels.includes(label) || yoloSelectedLabels.includes(label)) return;
+    yoloSelectedLabels.push(label);
+    renderYoloLabelOrder();
+}
+
+function unselectYoloLabel(label) {
+    yoloSelectedLabels = yoloSelectedLabels.filter(item => item !== label);
+    renderYoloLabelOrder();
+}
+
+function resetYoloLabelOrder() {
+    yoloSelectedLabels = [];
+    renderYoloLabelOrder();
+}
+
+function renderYoloLabelOrder() {
+    const unselectedContainer = document.getElementById('yolo-unselected-labels');
+    const selectedContainer = document.getElementById('yolo-selected-labels');
+    if (!unselectedContainer || !selectedContainer) return;
+
+    unselectedContainer.innerHTML = '';
+    const selectedSet = new Set(yoloSelectedLabels);
+    const waitingLabels = yoloAvailableLabels.filter(label => !selectedSet.has(label));
+    if (yoloAvailableLabels.length === 0) {
+        unselectedContainer.innerHTML = '<div class="yolo-order-message">No labels found in project.</div>';
+    } else if (waitingLabels.length === 0) {
+        unselectedContainer.innerHTML = '<div class="yolo-order-message">All labels have been ordered.</div>';
+    } else {
+        for (const label of waitingLabels) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'yolo-label-choice';
+            button.textContent = label;
+            button.title = 'Add this label to the export order';
+            button.addEventListener('click', () => selectYoloLabel(label));
+            unselectedContainer.appendChild(button);
+        }
+    }
+
+    selectedContainer.innerHTML = '';
+    if (yoloSelectedLabels.length === 0) {
+        selectedContainer.innerHTML = '<div class="yolo-order-message">Click a label above to start ordering.</div>';
+    } else {
+        yoloSelectedLabels.forEach((label, classId) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'yolo-label-order-item';
+            button.title = 'Click to remove this label from the order';
+
+            const id = document.createElement('span');
+            id.className = 'yolo-label-order-id';
+            id.textContent = String(classId);
+            const name = document.createElement('span');
+            name.textContent = label;
+            button.append(id, name);
+            button.addEventListener('click', () => unselectYoloLabel(label));
+            selectedContainer.appendChild(button);
+        });
+    }
+
+    updateYoloOrderControls();
+}
+
+function updateYoloOrderControls() {
+    const total = yoloAvailableLabels.length;
+    const selected = yoloSelectedLabels.length;
+    const progress = document.getElementById('yolo-order-progress');
+    const resetButton = document.getElementById('yolo-reset-order-btn');
+    const exportButton = document.getElementById('yolo-export-btn');
+    if (progress) {
+        const remaining = total - selected;
+        progress.textContent = total === 0
+            ? 'No labels available'
+            : selected === total
+                ? `Selected ${selected}/${total} — ready to export`
+                : `Selected ${selected}/${total} — ${remaining} remaining`;
+    }
+    if (resetButton) resetButton.disabled = selected === 0;
+    if (exportButton) exportButton.disabled = total === 0 || selected !== total;
 }
 
 async function runExportYolo() {
-    const checkboxes = document.querySelectorAll('.yolo-label-cb:checked');
-    const selectedLabels = Array.from(checkboxes).map(cb => cb.value);
-    if (selectedLabels.length === 0) {
-        alert('Please select at least one label.');
+    const selectedLabels = [...yoloSelectedLabels];
+    const isComplete = yoloAvailableLabels.length > 0
+        && selectedLabels.length === yoloAvailableLabels.length
+        && new Set(selectedLabels).size === selectedLabels.length
+        && yoloAvailableLabels.every(label => selectedLabels.includes(label));
+    if (!isComplete) {
+        alert('Please click every label before exporting.');
         return;
     }
 
+    const exportButton = document.getElementById('yolo-export-btn');
+    if (exportButton) exportButton.disabled = true;
     try {
         const res = await fetch('/api/export_yolo/' + PROJECT_KEY, {
             method: 'POST',
@@ -1725,13 +1871,18 @@ async function runExportYolo() {
         });
         const data = await res.json();
         if (data.status === 'success') {
-            alert(`Export complete!\n\nExported: ${data.exported} files\nSkipped (no JSON): ${data.skipped}\nErrors: ${data.errors}\nClasses: ${data.class_count}\n\nOutput: data/${MAIN_FOLDER}/${SUBFOLDER}/labels/`);
+            alert(`Export complete!\n\nExported: ${data.exported} files\nSkipped (no JSON): ${data.skipped}\nErrors: ${data.errors}\nClasses: ${data.class_count}\n\nOutput: ${data.labels_dir}`);
             closeExportYoloModal();
         } else {
             alert('Error: ' + (data.error || 'Unknown error'));
+            if (res.status === 400 && /incomplete|out of date/i.test(data.error || '')) {
+                await loadYoloExportLabels();
+            }
         }
     } catch (e) {
         alert('Export failed: ' + e.message);
+    } finally {
+        updateYoloOrderControls();
     }
 }
 
@@ -2147,154 +2298,6 @@ async function cancelAutoLabelTask() {
 }
 
 
-// --- LLM Auto Label Functions ---
-
-async function openLLMModal() {
-    document.getElementById('llm-modal').style.display = 'block';
-    resetProgressUI('llm');
-
-    const useSamplesToggle = document.getElementById('llm-use-samples');
-    const select = document.getElementById('llm-sample-project');
-
-    if (useSamplesToggle && select) {
-        useSamplesToggle.checked = true;
-        select.disabled = false;
-        select.style.opacity = '1';
-
-        useSamplesToggle.onchange = () => {
-            const enabled = useSamplesToggle.checked;
-            select.disabled = !enabled;
-            select.style.opacity = enabled ? '1' : '0.5';
-        };
-    }
-
-    // Populate Sample Project Dropdown
-    if (select) {
-        // Keep default option
-        select.innerHTML = '<option value="samples">Default (samples/)</option>';
-        try {
-            const res = await fetch('/api/projects');
-            if (res.ok) {
-                const projects = await res.json();
-                projects.forEach(p => {
-                    if (p === 'samples') return; // Skip default folder as it's already added
-                    const option = document.createElement('option');
-                    option.value = p;
-                    option.innerText = p;
-                    if (p === MAIN_FOLDER) {
-                         option.disabled = true; // Avoid using self as sample (optional logic, but safer)
-                         option.innerText += ' (Current)';
-                    }
-                    select.appendChild(option);
-                });
-            }
-            
-            // Auto-update prompt labels when sample source changes
-            select.onchange = async function() {
-                const val = select.value;
-                const promptElem = document.getElementById('llm-prompt');
-                if (!promptElem) return;
-
-                try {
-                    // Fetch labels from the selected sample project
-                    const res = await fetch('/api/labels/' + encodeURIComponent(val));
-                    if (res.ok) {
-                        const labels = await res.json();
-                        if (labels.length > 0) {
-                             const currentPrompt = promptElem.value;
-                             const regex = /(# Valid Labels List\s*)(\[[\s\S]*?\])/;
-                             
-                             if (regex.test(currentPrompt)) {
-                                 const newLabelsStr = JSON.stringify(labels);
-                                 promptElem.value = currentPrompt.replace(regex, '$1' + newLabelsStr);
-                                 promptElem.style.borderColor = '#00ff00';
-                                 setTimeout(() => promptElem.style.borderColor = '', 500);
-                             }
-                        }
-                    }
-                } catch (e) {
-                    console.error("Error updating prompt labels", e);
-                }
-            };
-        } catch (e) {
-            console.error("Failed to load projects for sample selection", e);
-        }
-    }
-}
-
-function closeLLMModal() {
-    document.getElementById('llm-modal').style.display = 'none';
-}
-
-async function runLLMAutoLabel() {
-    const apiKey = document.getElementById('llm-api-key').value;
-    const baseUrl = document.getElementById('llm-base-url').value;
-    const model = document.getElementById('llm-model').value;
-    const prompt = document.getElementById('llm-prompt').value;
-    const sampleEnabled = document.getElementById('llm-use-samples').checked;
-    const sampleProject = sampleEnabled ? document.getElementById('llm-sample-project').value : null;
-    
-    if (!apiKey || !baseUrl || !model) {
-        alert("Please fill in all required fields");
-        return;
-    }
-    
-    // UI Update
-    const progressContainer = document.getElementById('llm-progress-container');
-    const progressBar = document.getElementById('llm-progress-bar');
-    const statusText = document.getElementById('llm-status-text');
-    const countText = document.getElementById('llm-count');
-    const runBtn = document.getElementById('llm-run-btn');
-    const stopBtn = document.getElementById('llm-stop-btn');
-    
-    progressContainer.style.display = 'block';
-    runBtn.disabled = true;
-    runBtn.style.display = 'none';
-    stopBtn.style.display = 'inline-block';
-    
-    statusText.innerText = "Starting...";
-    progressBar.value = 0;
-    
-    try {
-        const res = await fetch('/api/auto_label_llm/' + PROJECT_KEY, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                api_key: apiKey,
-                base_url: baseUrl,
-                model: model,
-                prompt: prompt,
-                sample_project: sampleProject,
-                sample_enabled: sampleEnabled
-            })
-        });
-        
-        const data = await res.json();
-        if (data.error) {
-            alert("Error: " + data.error);
-            resetProgressUI('llm');
-            return;
-        }
-        
-        currentTaskId = data.task_id;
-        startPolling('llm');
-        
-    } catch (e) {
-        alert("Request failed: " + e);
-        resetProgressUI('llm');
-    }
-}
-
-async function cancelLLMTask() {
-    if (!currentTaskId) return;
-    try {
-        await fetch('/api/cancel_task/' + currentTaskId, { method: 'POST' });
-        document.getElementById('llm-status-text').innerText = "Cancelling...";
-    } catch (e) {
-        console.error("Cancel failed", e);
-    }
-}
-
 // --- Common Task Polling ---
 
 function startPolling(prefix) {
@@ -2377,211 +2380,5 @@ function resetProgressUI(prefix) {
     if (sb) sb.style.display = 'none';
     if (pc) pc.style.display = 'none';
 }
-
-// --- SAM3 Auto Label Functions ---
-
-async function openAutoLabelSAM3Modal() {
-    const modal = document.getElementById('auto-label-sam3-modal');
-    modal.style.display = 'block';
-    
-    const container = document.getElementById('sam3-model-list-container');
-    const hiddenInput = document.getElementById('selected-sam3-model-value');
-    
-    // Reset Progress UI
-    resetProgressUI('sam3');
-    
-    // Populate Sample Project Dropdown (SAM3)
-    const select = document.getElementById('sam3-sample-project');
-    if (select) {
-        select.innerHTML = '<option value="" disabled selected>Select Sample Source...</option>';
-        try {
-            const res = await fetch('/api/projects');
-            if (res.ok) {
-                const projects = await res.json();
-                projects.forEach(p => {
-                    const option = document.createElement('option');
-                    option.value = p;
-                    option.innerText = p;
-                    if (p === MAIN_FOLDER) {
-                         option.disabled = true;
-                         option.innerText += ' (Current)';
-                    }
-                    select.appendChild(option);
-                });
-            }
-        } catch (e) {
-            console.error("Error loading projects for SAM3 samples", e);
-        }
-    }
-    
-    try {
-        const res = await fetch('/api/models');
-        const models = await res.json();
-        
-        container.innerHTML = '';
-        if (models.length === 0) {
-            container.innerHTML = '<div style="padding: 10px; color: #666; text-align: center;">No models found</div>';
-            hiddenInput.value = '';
-        } else {
-            models.forEach((m, index) => {
-                const itemDiv = document.createElement('div');
-                itemDiv.style.display = 'flex';
-                itemDiv.style.alignItems = 'center';
-                itemDiv.style.width = '100%';
-                itemDiv.style.boxSizing = 'border-box';
-                itemDiv.style.padding = '8px 5px';
-                itemDiv.style.borderBottom = '1px solid #eee';
-                
-                const radio = document.createElement('input');
-                radio.type = 'radio';
-                radio.name = 'sam3_model_choice';
-                radio.value = m;
-                radio.id = `sam3_model_radio_${index}`;
-                radio.style.marginRight = '10px';
-                radio.style.marginTop = '0'; 
-                radio.style.flexShrink = '0';
-                radio.style.width = '20px'; 
-                radio.style.height = '20px';
-                radio.style.cursor = 'pointer';
-                
-                if (index === 0 && !hiddenInput.value) {
-                    radio.checked = true;
-                    hiddenInput.value = m;
-                } else if (hiddenInput.value === m) {
-                    radio.checked = true;
-                }
-                
-                radio.onchange = () => { hiddenInput.value = m; };
-                
-                const label = document.createElement('label');
-                label.htmlFor = `sam3_model_radio_${index}`;
-                label.innerText = m;
-                label.style.flex = '1 1 auto';
-                label.style.minWidth = '0';
-                label.style.margin = '0';
-                label.style.cursor = 'pointer';
-                label.style.textAlign = 'left';
-                label.style.wordBreak = 'break-all';
-                label.style.lineHeight = '1.2';
-                
-                // Delete icon (X)
-                const deleteBtn = document.createElement('span');
-                deleteBtn.innerHTML = '&times;';
-                deleteBtn.style.color = '#dc3545';
-                deleteBtn.style.fontWeight = 'bold';
-                deleteBtn.style.cursor = 'pointer';
-                deleteBtn.style.fontSize = '20px';
-                deleteBtn.style.lineHeight = '1';
-                deleteBtn.style.padding = '0 8px';
-                deleteBtn.style.marginLeft = '5px';
-                deleteBtn.style.flexShrink = '0';
-                deleteBtn.title = 'Delete Model';
-                deleteBtn.onclick = (e) => {
-                    e.stopPropagation();
-                    deleteModelByNameSAM3(m);
-                };
-                
-                itemDiv.appendChild(radio);
-                itemDiv.appendChild(label);
-                itemDiv.appendChild(deleteBtn);
-                container.appendChild(itemDiv);
-            });
-            
-            const checked = container.querySelector('input[name="sam3_model_choice"]:checked');
-            if (!checked && models.length > 0) {
-                 const firstRadio = container.querySelector('input[name="sam3_model_choice"]');
-                 if (firstRadio) {
-                     firstRadio.checked = true;
-                     hiddenInput.value = firstRadio.value;
-                 }
-            }
-        }
-    } catch (e) {
-        container.innerHTML = '<div style="color: red;">Error loading models</div>';
-    }
-}
-
-function closeAutoLabelSAM3Modal() {
-    document.getElementById('auto-label-sam3-modal').style.display = 'none';
-}
-
-async function deleteModelByNameSAM3(modelName) {
-    if (!confirm(`确定要删除模型 "${modelName}" 吗？`)) {
-        return;
-    }
-    try {
-        const res = await fetch(`/api/delete_model/${encodeURIComponent(modelName)}`, {
-            method: 'DELETE'
-        });
-        const data = await res.json();
-        if (data.status === 'success') {
-            // Refresh SAM3 list
-            openAutoLabelSAM3Modal();
-        } else {
-            alert('删除模型失败: ' + (data.error || 'Unknown error'));
-        }
-    } catch (e) {
-        alert('删除模型请求失败');
-    }
-}
-
-async function runAutoLabelSAM3() {
-    const hiddenInput = document.getElementById('selected-sam3-model-value');
-    const modelName = hiddenInput.value;
-    const conf = document.getElementById('sam3-conf-threshold').value;
-    const sampleProjectName = document.getElementById('sam3-sample-project').value;
-    
-    if (!modelName) {
-        alert("Please select a model");
-        return;
-    }
-
-    if (!sampleProjectName) {
-        alert("Please select a sample source");
-        return;
-    }
-    
-    const progressContainer = document.getElementById('sam3-progress-container');
-    const progressBar = document.getElementById('sam3-progress-bar');
-    const statusText = document.getElementById('sam3-status-text');
-    const runBtn = document.getElementById('sam3-run-btn');
-    const stopBtn = document.getElementById('sam3-stop-btn');
-    
-    progressContainer.style.display = 'block';
-    runBtn.disabled = true;
-    runBtn.style.display = 'none';
-    stopBtn.style.display = 'inline-block';
-    
-    statusText.innerText = "Starting SAM3...";
-    progressBar.value = 0;
-    
-    try {
-        const res = await fetch('/api/auto_label_sam3/' + PROJECT_KEY, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                model_name: modelName,
-                conf: conf,
-                sample_project_name: sampleProjectName
-            })
-        });
-        
-        const data = await res.json();
-        if (data.error) {
-            alert("Error: " + data.error);
-            resetProgressUI('sam3');
-            return;
-        }
-        
-        currentTaskId = data.task_id;
-        startPolling('sam3');
-        
-    } catch (e) {
-        alert("Request failed: " + e);
-        resetProgressUI('sam3');
-    }
-}
-
-
 
 window.onload = init;

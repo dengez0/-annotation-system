@@ -14,6 +14,7 @@ env/
 ENV/
 build/
 dist/
+wheelhouse/
 *.egg-info/
 .eggs/
 
@@ -36,6 +37,7 @@ runs/
 # Keep the directory names documented in README, but do not commit real images/labels.
 data/*
 !data/.gitkeep
+processed/
 
 # Model weights and exported inference engines
 models/*
@@ -82,6 +84,10 @@ desktop.ini
 .idea/
 *.swp
 *.swo
+
+# Local Java toolchain and build output
+.tools/
+backend-java/target/
 
 # =========================
 # Local one-off scripts

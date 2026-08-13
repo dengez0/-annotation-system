@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KINTH 2D Annotation System</title>
+    <link rel="stylesheet" href="/static/css/style.css?v=7">
+    <style>
+        .home-shell {
+            min-height: 100vh;
+            box-sizing: border-box;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 14px;
+        }
+        .home-content { width: min(100%, 600px); text-align: center; }
+        .home-title {
+            margin: 0 0 50px;
+            color: var(--text-primary);
+            font-size: clamp(24px, 4vw, 30px);
+            font-weight: 700;
+            letter-spacing: 2px;
+        }
+        .module-list { display: flex; flex-direction: column; gap: 80px; }
+        .module-card {
+            display: block;
+            padding: 30px 24px;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            background: var(--bg-panel);
+            color: var(--text-primary);
+            text-decoration: none;
+            transition: transform .15s, border-color .15s, background .15s;
+        }
+        .module-card:hover {
+            transform: translateY(-2px);
+            border-color: var(--accent-blue);
+            background: var(--bg-hover);
+        }
+        .module-card h2 { margin: 0 0 6px; font-size: 18px; }
+        .module-card p { margin: 0; color: var(--text-secondary); font-size: 14px; }
+    </style>
+</head>
+<body class="dark">
+    <main class="home-shell">
+        <section class="home-content" aria-label="系统模块">
+            <h1 class="home-title">KINTH 2D Annotation System</h1>
+            <nav class="module-list">
+                <a class="module-card" href="/annotation"><h2>标注系统</h2><p>图片标注与导出</p></a>
+                <a class="module-card" href="/data-processing"><h2>数据处理</h2><p>项目管理与标注统计</p></a>
+                <a class="module-card" href="/model-detection"><h2>模型检测</h2><p>YOLO 模型管理</p></a>
+            </nav>
+        </section>
+    </main>
+</body>
+</html>

@@ -2,18 +2,22 @@ import os
 
 from flask import Blueprint, jsonify, request, send_file
 
-from runtime import DATA_DIR
+from runtime import BASE_DIR, DATA_DIR, PROCESSED_DIR, task_manager
+from services.dataset_processor import available_labels, process_dataset, validate_label_order
 from services.annotation_store import create_empty_jsons as create_empty_json_files
+from services.annotation_store import list_labels as list_project_labels
 from services.file_service import (
     copy_files_to_paste,
     delete_files as delete_project_files,
     delete_project as delete_project_path,
     make_project_archive,
     move_files as move_project_files,
+    move_files_to_completed,
+    restore_files_from_completed,
     rename_project as rename_project_path,
     upload_files as save_uploaded_files,
 )
-from services.yolo_export import export_yolo_annotations
+from services.yolo_export import export_yolo_annotations, validate_yolo_label_order
 from services.work_logger import write_work_log
 
 file_bp = Blueprint('files', __name__)
@@ -29,14 +33,53 @@ def upload_folder():
         main_folder = request.form.get('main_folder', 'New_Project')
         subfolder = request.form.get('subfolder', 'default')
         file_paths = request.form.get('file_paths', '[]')
-        result = save_uploaded_files(DATA_DIR, files, main_folder, subfolder, file_paths)
+        upload_manifest = request.form.get('upload_manifest', '')
+        result = save_uploaded_files(
+            DATA_DIR,
+            files,
+            main_folder,
+            subfolder,
+            file_paths,
+            upload_manifest,
+        )
         write_work_log(
-            'UPLOAD', request.remote_addr, main_folder, subfolder, target='files', count=result['count']
+            'UPLOAD',
+            request.remote_addr,
+            result['main_folder'],
+            result['subfolder'],
+            target='files',
+            count=result['count'],
         )
         return jsonify(result)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         print(f"Upload error: {e}")
         return jsonify({'error': str(e)}), 500
+
+
+@file_bp.route('/api/data_processing/labels/<main_folder>/<subfolder>')
+def processing_labels(main_folder, subfolder):
+    project_path = os.path.join(DATA_DIR, main_folder, subfolder)
+    if not os.path.isdir(project_path):
+        return jsonify({'error': 'Project not found'}), 404
+    return jsonify({'labels': available_labels(project_path)})
+
+
+@file_bp.route('/api/data_processing/process/<main_folder>/<subfolder>', methods=['POST'])
+def process_uploaded_dataset(main_folder, subfolder):
+    project_path = os.path.join(DATA_DIR, main_folder, subfolder)
+    if not os.path.isdir(project_path):
+        return jsonify({'error': 'Project not found'}), 404
+    data = request.get_json(silent=True) or {}
+    try:
+        labels = data.get('labels', [])
+        validate_label_order(labels, project_path)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    task_id, _ = task_manager.create_task(type='data_processing', stage='queued', main_folder=main_folder, subfolder=subfolder)
+    task_manager.submit(process_dataset, task_manager, task_id, DATA_DIR, PROCESSED_DIR, main_folder, subfolder, labels, request.remote_addr, write_work_log)
+    return jsonify({'status': 'started', 'task_id': task_id})
 
 
 @file_bp.route('/api/rename_project', methods=['POST'])
@@ -144,6 +187,48 @@ def move_files(main_folder, subfolder):
     return jsonify(result), status
 
 
+@file_bp.route('/api/move_to_completed/<main_folder>/<subfolder>', methods=['POST'])
+def move_to_completed(main_folder, subfolder):
+    data = request.get_json(silent=True) or {}
+    filenames = data.get('filenames', [])
+    if not isinstance(filenames, list) or not filenames:
+        return jsonify({'error': 'No files specified'}), 400
+
+    result, status = move_files_to_completed(DATA_DIR, main_folder, subfolder, filenames)
+    if status == 200:
+        write_work_log(
+            'MOVE_FILES',
+            request.remote_addr,
+            main_folder,
+            subfolder,
+            target='files',
+            count=result.get('moved', 0),
+            destination=result.get('destination'),
+        )
+    return jsonify(result), status
+
+
+@file_bp.route('/api/restore_from_completed/<subfolder>', methods=['POST'])
+def restore_from_completed(subfolder):
+    data = request.get_json(silent=True) or {}
+    filenames = data.get('filenames', [])
+    if not isinstance(filenames, list) or not filenames:
+        return jsonify({'error': 'No files specified'}), 400
+
+    result, status = restore_files_from_completed(DATA_DIR, subfolder, filenames)
+    if status == 200:
+        write_work_log(
+            'RESTORE_FILES',
+            request.remote_addr,
+            'moved image',
+            subfolder,
+            target='files',
+            count=result.get('moved', 0),
+            destination=result.get('destination'),
+        )
+    return jsonify(result), status
+
+
 @file_bp.route('/api/copy_files/<main_folder>/<subfolder>', methods=['POST'])
 def copy_files(main_folder, subfolder):
     data = request.json
@@ -184,26 +269,34 @@ def create_empty_jsons(main_folder, subfolder):
 
 @file_bp.route('/api/export_yolo/<main_folder>/<subfolder>', methods=['POST'])
 def export_yolo(main_folder, subfolder):
-    data = request.json
-    selected_labels = data.get('labels', [])
-    if not selected_labels:
-        return jsonify({'error': 'No labels selected'}), 400
-
     project_path = os.path.join(DATA_DIR, main_folder, subfolder)
     if not os.path.exists(project_path):
         return jsonify({'error': 'Project not found'}), 404
 
     try:
-        result = export_yolo_annotations(project_path, selected_labels)
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            raise ValueError('Invalid request body')
+        selected_labels = data.get('labels')
+        project_labels = list_project_labels(DATA_DIR, main_folder, subfolder)
+        validate_yolo_label_order(selected_labels, project_labels)
+        if os.path.basename(subfolder) != subfolder or '\\' in subfolder:
+            raise ValueError('Invalid project folder name')
+        output_dir = os.path.join(BASE_DIR, 'labels', f'{subfolder}_labels')
+        result = export_yolo_annotations(project_path, selected_labels, output_dir)
         write_work_log(
             'EXPORT_YOLO',
             request.remote_addr,
             main_folder,
             subfolder,
-            target='annotations',
+            target=result['labels_dir'],
             count=result.get('exported', 0),
         )
         return jsonify(result)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except FileExistsError:
+        return jsonify({'error': f'Export destination already exists: labels/{subfolder}_labels'}), 409
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

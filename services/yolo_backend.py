@@ -1,6 +1,10 @@
 import os
 
-CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.cache')
+CACHE_DIR = os.path.abspath(
+    os.environ.get('SIMPLELABEL_CACHE_DIR')
+    or os.environ.get('XDG_CACHE_HOME')
+    or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.cache')
+)
 os.makedirs(os.path.join(CACHE_DIR, 'ultralytics'), exist_ok=True)
 os.makedirs(os.path.join(CACHE_DIR, 'matplotlib'), exist_ok=True)
 os.environ.setdefault('YOLO_CONFIG_DIR', os.path.join(CACHE_DIR, 'ultralytics'))

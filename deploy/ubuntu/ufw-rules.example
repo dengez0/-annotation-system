@@ -1,0 +1,6 @@
+# Documentation only. Do not execute without replacing the example network.
+# Review existing remote-maintenance access before changing firewall rules.
+
+# sudo ufw allow from 192.168.1.0/24 to any port 18083 proto tcp
+# Do not add an allow rule for port 18085; the Worker binds to 127.0.0.1 only.
+# sudo ufw status verbose

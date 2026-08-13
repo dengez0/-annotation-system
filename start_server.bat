@@ -31,10 +31,13 @@ if not exist "logs" mkdir logs
 set LOCAL_IP=
 for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /i "IPv4"') do (
     if not defined LOCAL_IP (
-        set "RAW_IP=%%a"
+        set "LOCAL_IP=%%a"
     )
 )
-if defined RAW_IP for /f "tokens=*" %%b in ("%RAW_IP%") do set LOCAL_IP=%%b
+if defined LOCAL_IP for /f "tokens=*" %%b in ("%LOCAL_IP%") do set LOCAL_IP=%%b
+
+:: The work-log dashboard is restricted to this address for this server run.
+if defined LOCAL_IP set "SIMPLELABEL_ADMIN_IP=%LOCAL_IP%"
 
 echo Starting Waitress server on port 18083...
 echo Local:   http://127.0.0.1:18083
@@ -48,6 +51,6 @@ echo Press Ctrl+C to stop the server.
 echo ============================================
 echo.
 
-python -m waitress --host=0.0.0.0 --port=18083 --threads=8 --channel-timeout=600 --max-request-body-size=0 app:app
+python -m waitress --host=0.0.0.0 --port=18083 --threads=8 --channel-timeout=600 --max-request-body-size=17179869184 app:app
 
 pause

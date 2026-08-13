@@ -1,7 +1,5 @@
 Flask
 ultralytics
-tenacity
-openai
 Pillow
 gunicorn
 waitress

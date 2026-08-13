@@ -1,0 +1,10 @@
+# Direct runtime dependencies. Install only from the reviewed offline wheelhouse.
+# PyTorch must also be present in the wheelhouse; CPU is the required preview default.
+torch==2.7.1+cpu
+Flask==3.1.1
+waitress==3.0.2
+ultralytics==8.3.152
+Pillow==11.2.1
+numpy==2.2.6
+opencv-python-headless==4.11.0.86
+PyYAML==6.0.2

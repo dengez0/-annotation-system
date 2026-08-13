@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <title>Simple Label Studio</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=3">
+    <link rel="stylesheet" href="/static/css/style.css?v=5">
     <style>
         .main-folder-card {
             background: var(--bg-secondary); border: 1px solid var(--border-color);
@@ -62,15 +62,34 @@
         .upload-row input[type="text"] { padding: 8px 12px; background: var(--input-bg); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px; font-size: 14px; }
         .upload-target-label { color: var(--text-dim); font-size: 14px; white-space: nowrap; }
         .upload-target-val { color: var(--accent-blue); font-weight: 600; font-size: 14px; }
+        .processing-label-list { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+        .processing-label-choice { padding:7px 10px; border:1px solid var(--border-color); border-radius:4px; background:var(--bg-input); color:var(--text-primary); cursor:pointer; }
+        .processing-label-choice.selected { background:var(--bg-active); border-color:var(--accent-blue); color:#fff; }
     </style>
 </head>
 <body class="dark">
     <div class="container">
-        <h1>KINTH 2D Annotation System</h1>
+        <h1>{% if data_processing %}数据处理{% else %}KINTH 2D Annotation System{% endif %}</h1>
 
-        <div style="text-align:right;margin-bottom:12px;">
+        <div class="index-top-actions">
+            <button onclick="location.href='/'" class="toolbar-btn" style="padding:8px 20px;font-size:14px;">Home</button>
+            {% if not data_processing %}<button onclick="location.href='/work-logs'" class="toolbar-btn accent-purple" style="padding:8px 20px;font-size:14px;">📊 工作日志</button>{% endif %}
             <button onclick="toggleUploadMode()" id="toggle-upload-btn" class="toolbar-btn accent-green" style="padding:8px 20px;font-size:14px;">📁 上传文件夹</button>
         </div>
+
+        {% if data_processing %}
+        <div id="processing-label-modal" class="modal" style="display:none;">
+            <div class="modal-content" style="max-width:480px;">
+                <div class="modal-header">确认 YOLO 标签顺序</div>
+                <div class="modal-body">
+                    <p style="font-size:13px;color:var(--text-secondary);margin-top:0;">请按顺序点击全部非 mask 标签。mask 区域会涂黑且不会导出。</p>
+                    <div id="processing-label-list" class="processing-label-list"></div>
+                    <div id="processing-label-status" style="margin-top:12px;font-size:12px;color:var(--text-secondary);"></div>
+                </div>
+                <div class="modal-footer"><button class="btn btn-secondary" onclick="closeProcessingLabelModal()">取消</button><button id="processing-start-btn" class="btn btn-primary" onclick="startDatasetProcessing()" disabled>开始处理</button></div>
+            </div>
+        </div>
+        {% endif %}
 
         <div class="upload-section" id="upload-section" style="display:none;">
             <h3>上传数据集</h3>
@@ -101,7 +120,7 @@
                     <span class="main-folder-icon">&#128193;</span>
                     <div class="main-folder-info">
                         <div class="main-folder-name">{{ mf.name }}</div>
-                        <div class="main-folder-meta">{{ mf.sub_count }} 个子文件夹 &middot; {{ mf.total_images }} 张图片</div>
+                        <div class="main-folder-meta">{{ mf.sub_count }} 个子文件夹 &middot; {% if data_processing %}已标注 {{ mf.total_annotated }} / 共 {{ mf.total_images }} 张{% else %}{{ mf.total_images }} 张图片{% endif %}</div>
                     </div>
                     <div class="main-folder-actions" onclick="event.stopPropagation()">
                         <button class="btn-icon" title="重命名" onclick="renameProject('{{ mf.name }}')">&#9999;</button>
@@ -115,7 +134,7 @@
                         <span class="subfolder-name">
                             <a href="/annotate/{{ mf.name }}/{{ sf.name }}">{{ sf.name }}</a>
                         </span>
-                        <span class="subfolder-count">{{ sf.count }} 张</span>
+                        <span class="subfolder-count">{% if data_processing %}已标注 {{ sf.annotated_count }} / 共 {{ sf.count }} 张{% else %}{{ sf.count }} 张{% endif %}</span>
                         <span class="subfolder-actions">
                             <button class="btn-icon export" title="导出" onclick="event.stopPropagation(); exportSubProject('{{ mf.name }}', '{{ sf.name }}')">&#11015;</button>
                             <button class="btn-icon" title="重命名" onclick="event.stopPropagation(); renameSubProject('{{ mf.name }}', '{{ sf.name }}')">&#9999;</button>
@@ -141,6 +160,10 @@
     <script>
         let selectedMainFolder = null;
         let uploadMode = 'folder';
+        const IS_DATA_PROCESSING = {{ 'true' if data_processing else 'false' }};
+        let processingTarget = null;
+        let processingLabels = [];
+        let processingOrder = [];
 
         function setUploadMode(mode) {
             uploadMode = mode;
@@ -261,6 +284,16 @@
             if (card) card.classList.toggle('open');
         }
 
+        function encodeUploadManifest(manifest) {
+            const bytes = new TextEncoder().encode(JSON.stringify(manifest));
+            let binary = '';
+            const chunkSize = 0x8000;
+            for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+                binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+            }
+            return btoa(binary);
+        }
+
         async function uploadFiles() {
             const input = uploadMode === 'folder'
                 ? document.getElementById('file-input-folder')
@@ -291,6 +324,11 @@
                     paths.push(file.webkitRelativePath || file.name);
                 });
                 formData.append('file_paths', JSON.stringify(paths));
+                formData.append('upload_manifest', encodeUploadManifest({
+                    main_folder: mainFolder,
+                    subfolder: subfolder,
+                    paths: paths,
+                }));
 
                 try {
                     status.innerText = `上传中 ${i + 1}-${Math.min(i + batchSize, totalFiles)} / ${totalFiles}...`;
@@ -320,8 +358,69 @@
 
             status.innerText = "上传完成！";
             status.style.color = 'var(--accent-green)';
-            alert(`成功上传 ${uploadedCount} 个文件到 ${mainFolder}/${subfolder}！`);
-            location.reload();
+            if (IS_DATA_PROCESSING && uploadMode === 'folder') {
+                await openDatasetProcessing(mainFolder, subfolder, status);
+            } else {
+                alert(`成功上传 ${uploadedCount} 个文件到 ${mainFolder}/${subfolder}！`);
+                location.reload();
+            }
+        }
+
+        async function openDatasetProcessing(mainFolder, subfolder, status) {
+            processingTarget = {mainFolder, subfolder};
+            try {
+                status.innerText = '正在读取标签…';
+                const response = await fetch(`/api/data_processing/labels/${encodeURIComponent(mainFolder)}/${encodeURIComponent(subfolder)}`);
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || '读取标签失败');
+                processingLabels = data.labels || [];
+                processingOrder = [];
+                const list = document.getElementById('processing-label-list');
+                list.innerHTML = '';
+                processingLabels.forEach(label => {
+                    const button = document.createElement('button');
+                    button.type = 'button'; button.className = 'processing-label-choice'; button.textContent = label;
+                    button.onclick = () => selectProcessingLabel(label, button);
+                    list.appendChild(button);
+                });
+                document.getElementById('processing-label-modal').style.display = 'block';
+                updateProcessingLabelStatus();
+            } catch (error) {
+                status.innerText = '上传成功，但无法启动处理：' + error.message;
+                status.style.color = 'var(--accent-red)';
+            }
+        }
+
+        function selectProcessingLabel(label, button) {
+            if (processingOrder.includes(label)) return;
+            processingOrder.push(label); button.classList.add('selected');
+            button.textContent = `${processingOrder.length}. ${label}`;
+            updateProcessingLabelStatus();
+        }
+        function updateProcessingLabelStatus() {
+            const complete = processingOrder.length === processingLabels.length;
+            document.getElementById('processing-label-status').textContent = processingLabels.length ? `已选择 ${processingOrder.length} / ${processingLabels.length}` : '未发现非 mask 标签，将只生成空 TXT。';
+            document.getElementById('processing-start-btn').disabled = !complete;
+        }
+        function closeProcessingLabelModal() { document.getElementById('processing-label-modal').style.display = 'none'; location.reload(); }
+        async function startDatasetProcessing() {
+            const target = processingTarget;
+            const status = document.getElementById('processing-label-status');
+            document.getElementById('processing-start-btn').disabled = true;
+            try {
+                const response = await fetch(`/api/data_processing/process/${encodeURIComponent(target.mainFolder)}/${encodeURIComponent(target.subfolder)}`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({labels:processingOrder})});
+                const data = await response.json(); if (!response.ok) throw new Error(data.error || '无法开始处理');
+                status.textContent = '处理任务已启动，页面将显示进度。';
+                pollDatasetProcessing(data.task_id, status);
+            } catch (error) { status.textContent = '处理启动失败：' + error.message; document.getElementById('processing-start-btn').disabled = false; }
+        }
+        async function pollDatasetProcessing(taskId, status) {
+            const response = await fetch(`/api/task_status/${encodeURIComponent(taskId)}`); const task = await response.json();
+            if (!response.ok) { status.textContent = task.error || '读取任务状态失败'; return; }
+            status.textContent = `正在${task.stage || '处理'}：${task.progress || 0} / ${task.total || 0}`;
+            if (task.status === 'completed') { status.textContent = `处理完成，已交付 ${task.processed_count} 张图片：${task.result_dir}`; return; }
+            if (task.status === 'failed' || task.status === 'cancelled') { status.textContent = `处理${task.status === 'failed' ? '失败' : '已取消'}：${task.error || ''}`; return; }
+            setTimeout(() => pollDatasetProcessing(taskId, status), 1000);
         }
 
         async function renameProject(oldName) {

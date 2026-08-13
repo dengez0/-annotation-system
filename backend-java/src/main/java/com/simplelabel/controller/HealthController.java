@@ -1,0 +1,47 @@
+package com.simplelabel.controller;
+
+import com.simplelabel.config.AppPaths;
+import com.simplelabel.worker.YoloWorkerClient;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+@RestController
+public class HealthController {
+    private final AppPaths paths;
+    private final YoloWorkerClient worker;
+
+    public HealthController(AppPaths paths, YoloWorkerClient worker) {
+        this.paths = paths;
+        this.worker = worker;
+    }
+
+    @GetMapping("/internal/health")
+    ResponseEntity<Map<String, Object>> health() {
+        Map<String, Boolean> checks = new LinkedHashMap<>();
+        checks.put("data", usable(paths.data()));
+        checks.put("models", usable(paths.models()));
+        checks.put("logs", usable(paths.logs()));
+        checks.put("processed", usable(paths.processed()));
+        checks.put("static", Files.isDirectory(paths.staticResources()) && Files.isReadable(paths.staticResources()));
+        checks.put("worker", worker.healthy());
+        boolean healthy = checks.values().stream().allMatch(Boolean::booleanValue);
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("status", healthy ? "ok" : "degraded");
+        response.put("service", "simplelabel-java");
+        response.put("version", getClass().getPackage().getImplementationVersion() == null
+                ? "development" : getClass().getPackage().getImplementationVersion());
+        response.put("checks", checks);
+        return ResponseEntity.status(healthy ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE).body(response);
+    }
+
+    private static boolean usable(Path path) {
+        return Files.isDirectory(path) && Files.isReadable(path) && Files.isWritable(path);
+    }
+}

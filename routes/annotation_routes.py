@@ -5,11 +5,13 @@ from flask import Blueprint, jsonify, render_template, request, send_from_direct
 from runtime import DATA_DIR
 from services.annotation_store import (
     list_images as list_project_images,
+    get_label_colors as get_project_label_colors,
     list_labels as list_project_labels,
     list_main_folders,
     list_projects as list_project_names,
     list_subfolders as list_project_subfolders,
     save_annotation as save_annotation_file,
+    save_label_color as save_project_label_color,
 )
 from services.work_logger import write_work_log
 
@@ -18,8 +20,23 @@ annotation_bp = Blueprint('annotation', __name__)
 
 
 @annotation_bp.route('/')
+def home():
+    return render_template('home.html')
+
+
+@annotation_bp.route('/annotation')
 def index():
-    return render_template('index.html', main_folders=list_main_folders(DATA_DIR))
+    return render_template('index.html', main_folders=list_main_folders(DATA_DIR), data_processing=False)
+
+
+@annotation_bp.route('/data-processing')
+def data_processing():
+    return render_template('index.html', main_folders=list_main_folders(DATA_DIR), data_processing=True)
+
+
+@annotation_bp.route('/model-detection')
+def model_detection():
+    return render_template('model_detection.html')
 
 
 @annotation_bp.route('/api/projects')
@@ -48,6 +65,27 @@ def get_images(main_folder, subfolder):
 @annotation_bp.route('/api/labels/<main_folder>/<subfolder>')
 def get_labels(main_folder, subfolder):
     return jsonify(list_project_labels(DATA_DIR, main_folder, subfolder))
+
+
+@annotation_bp.route('/api/label-colors/<main_folder>/<subfolder>')
+def get_label_colors(main_folder, subfolder):
+    return jsonify(get_project_label_colors(DATA_DIR, main_folder, subfolder))
+
+
+@annotation_bp.route('/api/label-colors/<main_folder>/<subfolder>', methods=['PUT'])
+def update_label_color(main_folder, subfolder):
+    data = request.get_json(silent=True) or {}
+    try:
+        colors = save_project_label_color(
+            DATA_DIR,
+            main_folder,
+            subfolder,
+            data.get('label'),
+            data.get('color'),
+        )
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    return jsonify({'status': 'success', 'colors': colors})
 
 
 @annotation_bp.route('/data/<main_folder>/<subfolder>/<path:filename>')
