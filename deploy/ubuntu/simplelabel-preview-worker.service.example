@@ -10,6 +10,7 @@ User=simplelabel
 Group=simplelabel
 WorkingDirectory=/opt/simplelabel/current
 EnvironmentFile=/etc/simplelabel/simplelabel-preview.env
+Environment=TZ=Asia/Shanghai
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=YOLO_CONFIG_DIR=/tmp/simplelabel-preview-cache/ultralytics
 Environment=MPLCONFIGDIR=/tmp/simplelabel-preview-cache/matplotlib

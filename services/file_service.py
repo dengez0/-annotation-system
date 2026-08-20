@@ -135,8 +135,8 @@ def move_files(data_dir, main_folder, subfolder, filenames, dest_folder='', dest
 
 def move_files_to_completed(data_dir, main_folder, subfolder, filenames):
     """Move completed annotations to moved image/<same subfolder> without overwriting."""
-    if main_folder != 'annotation flies':
-        return {'error': 'Move is only available from annotation flies'}, 403
+    if main_folder != 'annotation files':
+        return {'error': 'Move is only available from annotation files'}, 403
 
     safe_subfolder = os.path.basename(subfolder)
     if not safe_subfolder or safe_subfolder != subfolder:
@@ -205,7 +205,7 @@ def move_files_to_completed(data_dir, main_folder, subfolder, filenames):
 
 
 def restore_files_from_completed(data_dir, subfolder, filenames):
-    """Restore moved images to annotation flies/<same subfolder> without overwriting."""
+    """Restore moved images to annotation files/<same subfolder> without overwriting."""
     safe_subfolder = os.path.basename(subfolder)
     if not safe_subfolder or safe_subfolder != subfolder:
         return {'error': 'Invalid source subfolder'}, 400
@@ -214,7 +214,7 @@ def restore_files_from_completed(data_dir, subfolder, filenames):
     if not os.path.isdir(source_folder):
         return {'error': 'Moved project not found'}, 404
 
-    destination_folder = os.path.join(data_dir, 'annotation flies', safe_subfolder)
+    destination_folder = os.path.join(data_dir, 'annotation files', safe_subfolder)
     try:
         os.makedirs(destination_folder, exist_ok=True)
     except OSError as exc:
@@ -265,7 +265,7 @@ def restore_files_from_completed(data_dir, subfolder, filenames):
 
     return {
         'status': 'success',
-        'destination': f'annotation flies/{safe_subfolder}',
+        'destination': f'annotation files/{safe_subfolder}',
         'moved': len(moved),
         'skipped': skipped,
         'errors': errors,

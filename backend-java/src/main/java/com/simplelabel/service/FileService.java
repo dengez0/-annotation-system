@@ -23,6 +23,7 @@ import java.util.zip.ZipOutputStream;
 
 @Service
 public class FileService {
+    private static final String MOVE_ORIGINS_FILE = ".move_origins.json";
     private final AppPaths paths;
     private final ObjectMapper mapper;
     private final AnnotationService annotations;
@@ -93,14 +94,75 @@ public class FileService {
         return result;
     }
 
+    public Map<String, Object> uploadAnnotation(List<MultipartFile> files, String taskName,
+                                                 String uploadId, String filePathsRaw,
+                                                 boolean complete) throws IOException {
+        String task = safeComponent(taskName);
+        String session = safeComponent(uploadId);
+        Path sessionRoot = paths.safeDataPath(".uploads", session);
+        Path staging = sessionRoot.resolve(task).normalize();
+        if (!staging.startsWith(sessionRoot)) throw new IllegalArgumentException("Invalid upload session");
+        if (!Files.exists(staging)) {
+            for (WorkflowState state : WorkflowState.values()) {
+                if (Files.exists(paths.safeDataPath(state.directory(), task))) {
+                    throw new ApiException(HttpStatus.CONFLICT, "Task already exists in " + state.directory());
+                }
+            }
+            Files.createDirectories(staging.resolve("label"));
+        }
+        List<String> relativePaths;
+        try { relativePaths = mapper.readValue(filePathsRaw == null ? "[]" : filePathsRaw, new TypeReference<>() {}); }
+        catch (Exception exception) { throw new IllegalArgumentException("Invalid upload paths"); }
+        int count = 0;
+        for (int index = 0; index < files.size(); index++) {
+            MultipartFile file = files.get(index);
+            if (file.isEmpty() || file.getOriginalFilename() == null) continue;
+            String relative = index < relativePaths.size() ? normalize(relativePaths.get(index)) : file.getOriginalFilename();
+            List<String> components = splitRelative(relative);
+            String name = safeComponent(components.get(components.size() - 1));
+            Path destination = name.toLowerCase(Locale.ROOT).endsWith(".json")
+                    ? staging.resolve("label").resolve(name) : staging.resolve(name);
+            if (Files.exists(destination)) throw new ApiException(HttpStatus.CONFLICT, "Duplicate uploaded filename: " + name);
+            Files.createDirectories(destination.getParent());
+            Path temporary = Files.createTempFile(destination.getParent(), ".upload-", ".tmp");
+            try { file.transferTo(temporary); Files.move(temporary, destination); }
+            finally { Files.deleteIfExists(temporary); }
+            count++;
+        }
+        if (complete) {
+            long images;
+            try (Stream<Path> stream = Files.list(staging)) {
+                images = stream.filter(Files::isRegularFile)
+                        .filter(path -> AnnotationService.isImage(path.getFileName().toString())).count();
+            }
+            if (images == 0) throw new IllegalArgumentException("Uploaded task contains no supported images");
+            Path destination = paths.safeDataPath(WorkflowState.UNLABELED.directory(), task);
+            if (Files.exists(destination)) throw new ApiException(HttpStatus.CONFLICT, "Task already exists in 未标注");
+            moveNewDirectory(staging, destination);
+            Files.deleteIfExists(sessionRoot);
+        }
+        return Map.of("status", "success", "count", count, "task", task,
+                "complete", complete, "main_folder", WorkflowState.UNLABELED.directory());
+    }
+
+    public void cancelAnnotationUpload(String uploadId) throws IOException {
+        deleteDirectory(paths.safeDataPath(".uploads", safeComponent(uploadId)));
+    }
+
     public Map<String, Object> rename(String oldName, String newName, String level, String main) throws IOException {
         oldName = safeComponent(oldName); newName = safeComponent(newName);
         Path oldPath, newPath;
         if ("sub".equals(level)) {
             main = safeComponent(main);
+            if (WorkflowState.fromDirectory(main).isEmpty()) throw new ApiException(HttpStatus.FORBIDDEN, "Legacy projects are read-only");
+            for (WorkflowState state : WorkflowState.values()) {
+                if (!state.directory().equals(main) && Files.exists(paths.safeDataPath(state.directory(), newName))) {
+                    throw new ApiException(HttpStatus.CONFLICT, "Task name already exists in " + state.directory());
+                }
+            }
             oldPath = paths.safeDataPath(main, oldName); newPath = paths.safeDataPath(main, newName);
         } else {
-            oldPath = paths.safeDataPath(oldName); newPath = paths.safeDataPath(newName);
+            throw new ApiException(HttpStatus.FORBIDDEN, "Workflow folders cannot be renamed and legacy projects are read-only");
         }
         if (!Files.exists(oldPath)) throw new ApiException(HttpStatus.NOT_FOUND, "Project not found");
         if (Files.exists(newPath)) throw new ApiException(HttpStatus.BAD_REQUEST, "New name already exists");
@@ -109,6 +171,9 @@ public class FileService {
     }
 
     public Map<String, Object> deleteProject(String main, String sub, String level) throws IOException {
+        if (!"sub".equals(level) || WorkflowState.fromDirectory(main).isEmpty()) {
+            throw new ApiException(HttpStatus.FORBIDDEN, "Workflow folders cannot be deleted and legacy projects are read-only");
+        }
         Path target = "sub".equals(level)
                 ? paths.safeDataPath(safeComponent(main), safeComponent(sub))
                 : paths.safeDataPath(safeComponent(main));
@@ -130,7 +195,7 @@ public class FileService {
             Path image = project.resolve(name);
             try {
                 if (Files.deleteIfExists(image)) {
-                    Files.deleteIfExists(project.resolve(AnnotationService.stem(name) + ".json"));
+                    Files.deleteIfExists(annotations.annotationPath(main, sub, name));
                     deleted++;
                 }
             } catch (IOException exception) { errors.add(name); }
@@ -154,28 +219,160 @@ public class FileService {
         return movePairs(source, destination, filenames, false);
     }
 
-    public Map<String, Object> moveToCompleted(String main, String sub, List<String> filenames) throws IOException {
-        if (!"annotation flies".equals(main)) {
-            throw new ApiException(HttpStatus.FORBIDDEN, "Move is only available from annotation flies");
+    public synchronized Map<String, Object> moveToCompleted(String main, String sub, List<String> filenames) throws IOException {
+        WorkflowState state = WorkflowState.fromDirectory(main)
+                .orElseThrow(() -> new ApiException(HttpStatus.FORBIDDEN,
+                        "Move is only available in annotating and review tasks"));
+        if (state != WorkflowState.ANNOTATING && state != WorkflowState.REVIEW) {
+            throw new ApiException(HttpStatus.FORBIDDEN,
+                    "Move is only available in annotating and review tasks");
         }
         String safeSub = safeComponent(sub);
-        Path source = paths.safeDataPath("annotation flies", safeSub);
+        Path source = paths.safeDataPath(main, safeSub);
         if (!Files.isDirectory(source)) throw new ApiException(HttpStatus.NOT_FOUND, "Project not found");
         Path destination = paths.safeDataPath("moved image", safeSub);
         Files.createDirectories(destination);
-        Map<String, Object> result = movePairs(source, destination, filenames, true);
+        Map<String, String> origins = readMoveOrigins(destination);
+        int moved = 0;
+        List<Map<String, String>> skipped = new ArrayList<>(), errors = new ArrayList<>();
+        for (String raw : filenames) {
+            String name;
+            try { name = AnnotationService.fileName(raw); }
+            catch (Exception exception) { errors.add(issue(raw, "Invalid filename")); continue; }
+            Path sourceImage = source.resolve(name);
+            Path sourceJson = annotations.annotationPath(main, safeSub, name);
+            Path destinationImage = destination.resolve(name);
+            Path destinationJson = destination.resolve(AnnotationService.stem(name) + ".json");
+            if (!Files.isRegularFile(sourceImage)) { errors.add(issue(name, "Source image not found")); continue; }
+            if (Files.exists(destinationImage) || Files.exists(destinationJson)) {
+                skipped.add(issue(name, "Destination already contains the image or annotation")); continue;
+            }
+            try {
+                movePair(sourceImage, sourceJson, destinationImage, destinationJson);
+                String previousOrigin = origins.put(name, main);
+                try {
+                    writeMoveOrigins(destination, origins);
+                } catch (IOException exception) {
+                    restorePair(destinationImage, destinationJson, sourceImage, sourceJson);
+                    if (previousOrigin == null) origins.remove(name); else origins.put(name, previousOrigin);
+                    errors.add(issue(name, "Move record failed: " + exception.getMessage()));
+                    continue;
+                }
+                moved++;
+            } catch (IOException exception) {
+                errors.add(issue(name, "Move failed: " + exception.getMessage()));
+            }
+        }
+        Map<String, Object> result = transferResult(moved, skipped, errors);
         result.put("destination", "moved image/" + safeSub);
         return result;
     }
 
-    public Map<String, Object> restoreFromCompleted(String sub, List<String> filenames) throws IOException {
+    public synchronized Map<String, Object> restoreFromCompleted(String sub, List<String> filenames) throws IOException {
         String safeSub = safeComponent(sub);
         Path source = paths.safeDataPath("moved image", safeSub);
         if (!Files.isDirectory(source)) throw new ApiException(HttpStatus.NOT_FOUND, "Moved project not found");
-        Path destination = paths.safeDataPath("annotation flies", safeSub);
-        Files.createDirectories(destination);
-        Map<String, Object> result = movePairs(source, destination, filenames, true);
-        result.put("destination", "annotation flies/" + safeSub);
+        Map<String, String> origins = readMoveOrigins(source);
+        int moved = 0;
+        Set<String> destinations = new LinkedHashSet<>();
+        List<Map<String, String>> skipped = new ArrayList<>(), errors = new ArrayList<>();
+        for (String raw : filenames) {
+            String name;
+            try { name = AnnotationService.fileName(raw); }
+            catch (Exception exception) { errors.add(issue(raw, "Invalid filename")); continue; }
+            String destinationMain = resolveRestoreMain(origins.get(name), safeSub);
+            Path destination = paths.safeDataPath(destinationMain, safeSub);
+            Path destinationLabels = destination.resolve("label");
+            Path sourceImage = source.resolve(name);
+            Path sourceJson = source.resolve(AnnotationService.stem(name) + ".json");
+            Path destinationImage = destination.resolve(name);
+            Path destinationJson = destinationLabels.resolve(sourceJson.getFileName());
+            if (!Files.isRegularFile(sourceImage)) { errors.add(issue(name, "Source image not found")); continue; }
+            if (Files.exists(destinationImage) || Files.exists(destinationJson)) {
+                skipped.add(issue(name, "Destination already contains the image or annotation")); continue;
+            }
+            Files.createDirectories(destinationLabels);
+            try {
+                movePair(sourceImage, sourceJson, destinationImage, destinationJson);
+                String previousOrigin = origins.remove(name);
+                try {
+                    writeMoveOrigins(source, origins);
+                } catch (IOException exception) {
+                    restorePair(destinationImage, destinationJson, sourceImage, sourceJson);
+                    if (previousOrigin != null) origins.put(name, previousOrigin);
+                    errors.add(issue(name, "Restore record failed: " + exception.getMessage()));
+                    continue;
+                }
+                moved++;
+                destinations.add(destinationMain + "/" + safeSub);
+            } catch (IOException exception) {
+                errors.add(issue(name, "Restore failed: " + exception.getMessage()));
+            }
+        }
+        Map<String, Object> result = transferResult(moved, skipped, errors);
+        result.put("destination", destinations.size() == 1 ? destinations.iterator().next() : "原任务阶段/" + safeSub);
+        return result;
+    }
+
+    private Map<String, String> readMoveOrigins(Path movedProject) throws IOException {
+        Path record = movedProject.resolve(MOVE_ORIGINS_FILE);
+        if (!Files.isRegularFile(record)) return new LinkedHashMap<>();
+        return new LinkedHashMap<>(mapper.readValue(record.toFile(), new TypeReference<Map<String, String>>() {}));
+    }
+
+    private void writeMoveOrigins(Path movedProject, Map<String, String> origins) throws IOException {
+        Path record = movedProject.resolve(MOVE_ORIGINS_FILE);
+        if (origins.isEmpty()) {
+            Files.deleteIfExists(record);
+            return;
+        }
+        AnnotationService.atomicWrite(record,
+                mapper.writerWithDefaultPrettyPrinter().writeValueAsBytes(origins));
+    }
+
+    private String resolveRestoreMain(String recordedMain, String sub) {
+        boolean validRecorded = WorkflowState.ANNOTATING.directory().equals(recordedMain)
+                || WorkflowState.REVIEW.directory().equals(recordedMain);
+        if (validRecorded && Files.isDirectory(paths.safeDataPath(recordedMain, sub))) return recordedMain;
+        for (WorkflowState state : List.of(WorkflowState.ANNOTATING, WorkflowState.REVIEW)) {
+            if (Files.isDirectory(paths.safeDataPath(state.directory(), sub))) return state.directory();
+        }
+        return validRecorded ? recordedMain : WorkflowState.ANNOTATING.directory();
+    }
+
+    private static void movePair(Path sourceImage, Path sourceJson,
+                                 Path destinationImage, Path destinationJson) throws IOException {
+        Files.move(sourceImage, destinationImage);
+        if (!Files.isRegularFile(sourceJson)) return;
+        try {
+            Files.move(sourceJson, destinationJson);
+        } catch (IOException exception) {
+            try { Files.move(destinationImage, sourceImage); } catch (IOException ignored) { }
+            throw exception;
+        }
+    }
+
+    private static void restorePair(Path movedImage, Path movedJson,
+                                    Path originalImage, Path originalJson) {
+        try {
+            if (Files.isRegularFile(movedJson)) {
+                Files.createDirectories(originalJson.getParent());
+                Files.move(movedJson, originalJson);
+            }
+            if (Files.isRegularFile(movedImage)) {
+                Files.createDirectories(originalImage.getParent());
+                Files.move(movedImage, originalImage);
+            }
+        } catch (IOException ignored) { }
+    }
+
+    private static Map<String, Object> transferResult(int moved, List<Map<String, String>> skipped,
+                                                       List<Map<String, String>> errors) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("status", "success");
+        result.put("moved", moved);
+        result.put("skipped", skipped);
+        result.put("errors", errors);
         return result;
     }
 
@@ -192,7 +389,7 @@ public class FileService {
                 Path image = source.resolve(name);
                 if (!Files.isRegularFile(image)) continue;
                 Files.copy(image, destination.resolve(name), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
-                Path json = source.resolve(AnnotationService.stem(name) + ".json");
+                Path json = annotations.annotationPath(main, sub, name);
                 if (Files.isRegularFile(json)) Files.copy(json, destination.resolve(json.getFileName()), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
                 copied++;
             } catch (Exception exception) { errors.add(raw); }
@@ -220,7 +417,7 @@ public class FileService {
                 for (Path image : stream.filter(Files::isRegularFile).toList()) {
                     String imageName = image.getFileName().toString();
                     if (!AnnotationService.isImage(imageName)) continue;
-                    Path jsonPath = project.resolve(AnnotationService.stem(imageName) + ".json");
+                    Path jsonPath = annotations.annotationPath(main, sub, imageName);
                     if (!Files.isRegularFile(jsonPath)) { skipped++; continue; }
                     try {
                         JsonNode json = mapper.readTree(jsonPath.toFile());

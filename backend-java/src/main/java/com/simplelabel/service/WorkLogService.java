@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -19,9 +20,11 @@ public class WorkLogService {
     public static final int BACKUP_COUNT = 30;
     private static final DateTimeFormatter TIMESTAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private final Path logPath;
+    private final Clock clock;
 
-    public WorkLogService(AppPaths paths) {
+    public WorkLogService(AppPaths paths, Clock clock) {
         this.logPath = paths.logs().resolve("ip_work.log");
+        this.clock = clock;
     }
 
     public synchronized void write(String action, String clientIp, String mainFolder,
@@ -42,7 +45,7 @@ public class WorkLogService {
             if (boxes != null) fields.add("boxes=" + safe(boxes));
             if (destination != null && !destination.isBlank()) fields.add("destination=" + safe(destination));
             fields.add("success");
-            String line = LocalDateTime.now().format(TIMESTAMP) + " | " + String.join(" | ", fields) + System.lineSeparator();
+            String line = LocalDateTime.now(clock).format(TIMESTAMP) + " | " + String.join(" | ", fields) + System.lineSeparator();
             Files.writeString(logPath, line, StandardCharsets.UTF_8,
                     StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         } catch (IOException ignored) {

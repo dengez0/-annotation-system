@@ -32,8 +32,8 @@ bash deploy/ubuntu/build_release.sh
    bash deploy/ubuntu/verify_release.sh /opt/simplelabel/releases/<release-id>
    ```
 
-4. 仅为本项目创建无登录用户 `simplelabel`、`/opt/simplelabel/runtime` 和 `/srv/simplelabel-preview/{data,models,logs,processed}`。这些是管理员明确批准后的手工动作，项目脚本不会自动执行。
-5. 令 `/opt/simplelabel/current` 指向已验证版本。将 `simplelabel-preview.env.example` 复制到 `/etc/simplelabel/simplelabel-preview.env`，替换随机 Worker Token。
+4. 仅为本项目创建无登录用户 `simplelabel`、`/opt/simplelabel/runtime` 和 `/srv/simplelabel-preview/{data,models,logs,admin,processed}`。管理员目录权限设为 `0700`；这些是管理员明确批准后的手工动作，项目脚本不会自动执行。
+5. 令 `/opt/simplelabel/current` 指向已验证版本。将 `simplelabel-preview.env.example` 复制到 `/etc/simplelabel/simplelabel-preview.env`，替换随机 Worker Token，并通过服务器私有配置或离线工具初始化至少一个管理员令牌哈希。
 6. 以 `simplelabel` 用户执行离线安装：
 
    ```bash
@@ -49,6 +49,7 @@ SSH 隧道只负责当前用户访问；服务自身一直在远程运行，不�
 
 - `curl http://127.0.0.1:28083/internal/health` 返回 HTTP 200。
 - `ss -ltn` 显示 preview 端口只绑定 `127.0.0.1`。
+- 即使通过回环地址访问，管理员功能也必须先在 `/admin/activate` 输入有效设备令牌。
 - 用脱敏样本验证标注保存、恢复、移动、日志、CPU推理和数据处理。
 - 启动后立即、15分钟、60分钟重复管理员提供的既有业务健康检查。
 - 任何关键业务变化、资源越限、新失败单元或越界写入，都只停止并禁用 SimpleLabel preview 服务。

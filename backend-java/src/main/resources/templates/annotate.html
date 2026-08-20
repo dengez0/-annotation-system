@@ -23,22 +23,24 @@
             <button class="toolbar-btn" onclick="zoomIn()" title="Zoom In (Ctrl+=)">+</button>
             <button class="toolbar-btn" onclick="zoomReset()" title="Fit (Ctrl+0)">Fit</button>
             <span class="toolbar-sep">|</span>
-            <button class="toolbar-btn" onclick="exportCurrentProject()">Export</button>
+            <button th:if="${isAdmin}" class="toolbar-btn" onclick="exportCurrentProject()">Export</button>
+            <span th:if="${isAdmin}" class="toolbar-sep">|</span>
+            <button th:unless="${readOnly}" class="toolbar-btn" onclick="createEmptyJsons()" title="Create empty JSONs for images without annotations">+Empty JSON</button>
             <span class="toolbar-sep">|</span>
-            <button class="toolbar-btn" onclick="createEmptyJsons()" title="Create empty JSONs for images without annotations">+Empty JSON</button>
-            <span class="toolbar-sep">|</span>
-            <button class="toolbar-btn" onclick="openExportYoloModal()" title="Export JSON annotations to YOLO format TXT files">Export YOLO</button>
+            <button th:if="${isAdmin}" class="toolbar-btn" onclick="openExportYoloModal()" title="Export JSON annotations to YOLO format TXT files">Export YOLO</button>
             <span style="flex:1;"></span>
-            <button class="toolbar-paste-btn" id="paste-files-btn" onclick="pasteSelectedFiles()" title="Copy selected images and JSON files to paste image folder">📋 Paste</button>
-            <button th:if="${main_folder == 'annotation flies'}" class="toolbar-move-btn" id="move-files-btn" onclick="openMoveFilesModal()" title="Move selected images and JSON files to the matching moved image folder">📁 Move</button>
-            <button th:if="${main_folder == 'moved image'}" class="toolbar-move-btn" id="restore-files-btn" onclick="openRestoreFilesModal()" title="Restore selected images and JSON files to the matching annotation flies folder">↩ Restore</button>
-            <button class="toolbar-delete-btn" id="delete-files-btn" onclick="deleteSelectedFiles()" title="Delete selected images and JSON files">🗑 Delete</button>
+            <button th:if="${workflowState == 'annotating'}" class="toolbar-move-btn" onclick="transitionCurrentTask('annotating','review')">Done → 待检查</button>
+            <button th:if="${workflowState == 'review'}" class="toolbar-move-btn" onclick="transitionCurrentTask('review','completed')">Done → 已完成</button>
+            <button th:if="${workflowState == 'annotating' or workflowState == 'review'}" class="toolbar-move-btn" id="move-files-btn" onclick="openMoveFilesModal()" title="Move selected images and JSON annotations to moved image">📁 Move</button>
+            <button th:if="${main_folder == 'moved image'}" class="toolbar-move-btn" id="restore-files-btn" onclick="openRestoreFilesModal()" title="Restore selected images and JSON annotations to their task stage">↩ Restore</button>
+            <button th:unless="${readOnly}" class="toolbar-paste-btn" id="paste-files-btn" onclick="pasteSelectedFiles()" title="Copy selected images and JSON files to paste image folder">📋 Paste</button>
+            <button th:unless="${readOnly}" class="toolbar-delete-btn" id="delete-files-btn" onclick="deleteSelectedFiles()" title="Delete selected images and JSON files">🗑 Delete</button>
         </div>
         <div class="toolbar-row-2">
-            <button class="toolbar-btn active" id="draw-rect-btn" onclick="setRectMode()" title="Draw Rectangle (R)">Draw Rect</button>
-            <button class="toolbar-btn" id="pointer-btn" onclick="setPointerMode()" title="Edit Mode (R)">Edit</button>
+            <button th:unless="${readOnly}" class="toolbar-btn active" id="draw-rect-btn" onclick="setRectMode()" title="Draw Rectangle (R)">Draw Rect</button>
+            <button th:unless="${readOnly}" class="toolbar-btn" id="pointer-btn" onclick="setPointerMode()" title="Edit Mode (R)">Edit</button>
             <span class="toolbar-sep">|</span>
-            <button class="toolbar-btn accent accent-blue" onclick="openAutoLabelModal()">Auto Label (YOLO)</button>
+            <button th:unless="${readOnly}" class="toolbar-btn accent accent-blue" onclick="openAutoLabelModal()">Auto Label (YOLO)</button>
             <span class="toolbar-sep">|</span>
             <label class="checkbox-wrapper" title="Automatically use the last label for the next shape">
                 <input type="checkbox" id="auto-reuse-checkbox" checked onchange="toggleAutoReuseLabel(this.checked)">
@@ -177,7 +179,7 @@
     </div>
 
     <!-- Export YOLO Modal -->
-    <div id="export-yolo-modal" class="modal">
+    <div th:if="${isAdmin}" id="export-yolo-modal" class="modal">
         <div class="modal-content" style="max-width: 560px;">
             <div class="modal-header">Export YOLO Format</div>
             <div class="modal-body">
@@ -233,13 +235,30 @@
     <script th:inline="javascript">
         const MAIN_FOLDER = /*[[${main_folder}]]*/ "";
         const SUBFOLDER = /*[[${subfolder}]]*/ "";
+        const WORKFLOW_STATE = /*[[${workflowState}]]*/ "legacy";
+        const READ_ONLY = /*[[${readOnly}]]*/ true;
         function encodePath(s) { return encodeURIComponent(s); }
     </script>
     <script>
         function exportCurrentProject() {
             window.location.href = '/api/export/' + encodePath(MAIN_FOLDER) + '/' + encodePath(SUBFOLDER);
         }
+        async function transitionCurrentTask(from, to, allowIncomplete = false) {
+            const label = to === 'review' ? '提交到待检查' : '完成检查并进入已完成';
+            if (!allowIncomplete && !confirm(`确认${label}？`)) return;
+            const response = await fetch(`/api/workflow/tasks/${encodeURIComponent(SUBFOLDER)}/transition`, {
+                method: 'POST', headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({from, to, allow_incomplete: allowIncomplete})
+            });
+            const data = await response.json();
+            if (response.status === 409 && !allowIncomplete) {
+                if (confirm(`${data.error || '仍有图片没有 JSON'}。是否仍要继续？`)) return transitionCurrentTask(from, to, true);
+                return;
+            }
+            if (!response.ok) return alert(data.error || '状态更新失败');
+            location.href = '/annotation';
+        }
     </script>
-    <script src="/static/js/editor.js?v=14"></script>
+    <script src="/static/js/editor.js?v=16"></script>
 </body>
 </html>

@@ -2,16 +2,21 @@
 set -euo pipefail
 
 required=(
-    SIMPLELABEL_DEPLOYMENT_MODE SIMPLELABEL_ROOT SIMPLELABEL_BIND_ADDRESS SIMPLELABEL_PORT
-    SIMPLELABEL_DATA_DIR SIMPLELABEL_MODELS_DIR SIMPLELABEL_LOGS_DIR
+    SIMPLELABEL_DEPLOYMENT_MODE SIMPLELABEL_TIME_ZONE SIMPLELABEL_ROOT SIMPLELABEL_BIND_ADDRESS SIMPLELABEL_PORT
+    SIMPLELABEL_DATA_DIR SIMPLELABEL_MODELS_DIR SIMPLELABEL_LOGS_DIR SIMPLELABEL_ADMIN_DIR
     SIMPLELABEL_PROCESSED_DIR SIMPLELABEL_STATIC_DIR SIMPLELABEL_CACHE_DIR
     SIMPLELABEL_YOLO_WORKER_PORT SIMPLELABEL_YOLO_WORKER_URL
-    SIMPLELABEL_YOLO_WORKER_TOKEN SIMPLELABEL_YOLO_DEVICE SIMPLELABEL_ADMIN_IP
+    SIMPLELABEL_YOLO_WORKER_TOKEN SIMPLELABEL_YOLO_DEVICE
 )
 
 for name in "${required[@]}"; do
     [[ -n "${!name:-}" ]] || { echo "[ERROR] Missing ${name}." >&2; exit 1; }
 done
+
+[[ "${SIMPLELABEL_TIME_ZONE}" == "Asia/Shanghai" ]] || {
+    echo "[ERROR] SIMPLELABEL_TIME_ZONE must be Asia/Shanghai." >&2
+    exit 1
+}
 
 [[ "${SIMPLELABEL_ROOT}" == /opt/simplelabel/* ]] || {
     echo "[ERROR] SIMPLELABEL_ROOT must stay inside /opt/simplelabel." >&2
@@ -21,7 +26,7 @@ done
     echo "[ERROR] SIMPLELABEL_STATIC_DIR must stay inside /opt/simplelabel." >&2
     exit 1
 }
-for name in SIMPLELABEL_DATA_DIR SIMPLELABEL_MODELS_DIR SIMPLELABEL_LOGS_DIR SIMPLELABEL_PROCESSED_DIR; do
+for name in SIMPLELABEL_DATA_DIR SIMPLELABEL_MODELS_DIR SIMPLELABEL_LOGS_DIR SIMPLELABEL_ADMIN_DIR SIMPLELABEL_PROCESSED_DIR; do
     [[ "${!name}" == /srv/simplelabel/* || "${!name}" == /srv/simplelabel-preview/* ]] || {
         echo "[ERROR] ${name} must stay inside a SimpleLabel directory under /srv." >&2
         exit 1
@@ -34,7 +39,7 @@ done
 
 for name in SIMPLELABEL_ROOT SIMPLELABEL_DATA_DIR SIMPLELABEL_MODELS_DIR \
             SIMPLELABEL_LOGS_DIR SIMPLELABEL_PROCESSED_DIR SIMPLELABEL_STATIC_DIR \
-            SIMPLELABEL_CACHE_DIR; do
+            SIMPLELABEL_ADMIN_DIR SIMPLELABEL_CACHE_DIR; do
     [[ "${!name}" == /* ]] || { echo "[ERROR] ${name} must be an absolute path." >&2; exit 1; }
 done
 
@@ -50,6 +55,7 @@ case "${SIMPLELABEL_DEPLOYMENT_MODE}" in
             exit 1
         }
         [[ "${SIMPLELABEL_DATA_DIR}" == /srv/simplelabel-preview/* ]] || { echo "[ERROR] Preview must use isolated preview data." >&2; exit 1; }
+        [[ "${SIMPLELABEL_ADMIN_DIR}" == /srv/simplelabel-preview/* ]] || { echo "[ERROR] Preview must use an isolated preview administrator registry." >&2; exit 1; }
         ;;
     production)
         [[ "${SIMPLELABEL_BIND_ADDRESS}" == "0.0.0.0" ]] || { echo "[ERROR] Production Web bind address must be 0.0.0.0." >&2; exit 1; }
@@ -58,6 +64,7 @@ case "${SIMPLELABEL_DEPLOYMENT_MODE}" in
             exit 1
         }
         [[ "${SIMPLELABEL_DATA_DIR}" == /srv/simplelabel/* ]] || { echo "[ERROR] Production must use the production data directory." >&2; exit 1; }
+        [[ "${SIMPLELABEL_ADMIN_DIR}" == /srv/simplelabel/* ]] || { echo "[ERROR] Production must use the production administrator registry." >&2; exit 1; }
         ;;
     *)
         echo "[ERROR] Deployment mode must be preview or production." >&2
@@ -83,8 +90,8 @@ if [[ "${SIMPLELABEL_YOLO_DEVICE}" =~ ^[0-9]+$ && -z "${CUDA_VISIBLE_DEVICES:-}"
     exit 1
 fi
 
-if [[ "${SIMPLELABEL_ADMIN_IP}" == REPLACE_WITH_* ]]; then
-    echo "[ERROR] Replace the example administrator IP." >&2
+if [[ -z "${SIMPLELABEL_ADMIN_TOKEN_HASHES:-}" && ! -f "${SIMPLELABEL_ADMIN_DIR}/admin_tokens.json" ]]; then
+    echo "[ERROR] Configure bootstrap administrator token hashes or provide admin_tokens.json." >&2
     exit 1
 fi
 

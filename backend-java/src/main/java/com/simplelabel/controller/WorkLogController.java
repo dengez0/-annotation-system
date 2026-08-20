@@ -40,6 +40,6 @@ public class WorkLogController {
     }
 
     private void requireAdmin(HttpServletRequest request) {
-        if (!admin.isAllowed(request.getRemoteAddr())) throw new ApiException(HttpStatus.FORBIDDEN, "Invalid access");
+        if (!admin.isAllowed(request)) throw new ApiException(HttpStatus.FORBIDDEN, "Invalid access");
     }
 }

@@ -17,14 +17,16 @@ class AppPathsTest {
         Path data = temporary.resolve("runtime/data");
         Path models = temporary.resolve("runtime/models");
         Path logs = temporary.resolve("runtime/logs");
+        Path admin = temporary.resolve("runtime/admin");
         Path processed = temporary.resolve("runtime/processed");
         Path staticResources = temporary.resolve("release/static");
         AppPaths paths = new AppPaths(root.toString(), data.toString(), models.toString(),
-                logs.toString(), processed.toString(), staticResources.toString());
+                logs.toString(), admin.toString(), processed.toString(), staticResources.toString());
 
         assertEquals(data.toAbsolutePath().normalize(), paths.data());
         assertEquals(models.toAbsolutePath().normalize(), paths.models());
         assertEquals(logs.toAbsolutePath().normalize(), paths.logs());
+        assertEquals(admin.toAbsolutePath().normalize(), paths.admin());
         assertEquals(processed.toAbsolutePath().normalize(), paths.processed());
         assertEquals(staticResources.toAbsolutePath().normalize(), paths.staticResources());
     }

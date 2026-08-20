@@ -9,7 +9,7 @@ from services.file_service import move_files_to_completed, restore_files_from_co
 class MoveToCompletedTest(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.source = os.path.join(self.temp_dir.name, 'annotation flies', 'worker-a')
+        self.source = os.path.join(self.temp_dir.name, 'annotation files', 'worker-a')
         os.makedirs(self.source)
 
     def tearDown(self):
@@ -25,7 +25,7 @@ class MoveToCompletedTest(unittest.TestCase):
         self._create_pair('sample.jpg')
 
         result, status = move_files_to_completed(
-            self.temp_dir.name, 'annotation flies', 'worker-a', ['sample.jpg']
+            self.temp_dir.name, 'annotation files', 'worker-a', ['sample.jpg']
         )
 
         target = os.path.join(self.temp_dir.name, 'moved image', 'worker-a')
@@ -43,7 +43,7 @@ class MoveToCompletedTest(unittest.TestCase):
             json.dump({'shapes': []}, json_file)
 
         result, status = move_files_to_completed(
-            self.temp_dir.name, 'annotation flies', 'worker-a', ['sample.jpg']
+            self.temp_dir.name, 'annotation files', 'worker-a', ['sample.jpg']
         )
 
         self.assertEqual(status, 200)
@@ -61,13 +61,13 @@ class MoveToCompletedTest(unittest.TestCase):
 
     def test_restores_image_and_annotation_to_matching_subfolder(self):
         self._create_pair('sample.jpg')
-        move_files_to_completed(self.temp_dir.name, 'annotation flies', 'worker-a', ['sample.jpg'])
+        move_files_to_completed(self.temp_dir.name, 'annotation files', 'worker-a', ['sample.jpg'])
 
         result, status = restore_files_from_completed(self.temp_dir.name, 'worker-a', ['sample.jpg'])
 
         moved_folder = os.path.join(self.temp_dir.name, 'moved image', 'worker-a')
         self.assertEqual(status, 200)
-        self.assertEqual(result['destination'], 'annotation flies/worker-a')
+        self.assertEqual(result['destination'], 'annotation files/worker-a')
         self.assertEqual(result['moved'], 1)
         self.assertTrue(os.path.isfile(os.path.join(self.source, 'sample.jpg')))
         self.assertTrue(os.path.isfile(os.path.join(self.source, 'sample.json')))
@@ -76,7 +76,7 @@ class MoveToCompletedTest(unittest.TestCase):
 
     def test_restore_skips_when_annotation_destination_exists(self):
         self._create_pair('sample.jpg')
-        move_files_to_completed(self.temp_dir.name, 'annotation flies', 'worker-a', ['sample.jpg'])
+        move_files_to_completed(self.temp_dir.name, 'annotation files', 'worker-a', ['sample.jpg'])
         with open(os.path.join(self.source, 'sample.json'), 'w', encoding='utf-8') as json_file:
             json.dump({'shapes': [{'label': 'existing'}]}, json_file)
 

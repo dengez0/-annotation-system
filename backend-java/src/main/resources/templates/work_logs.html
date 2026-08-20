@@ -56,7 +56,11 @@
             COPY_FILES: '复制文件', CREATE_EMPTY_JSONS: '创建空标注', EXPORT_YOLO: '导出 YOLO',
             EXPORT_PROJECT: '导出项目', UPLOAD_MODEL: '上传模型', DELETE_MODEL: '删除模型',
             AUTO_LABEL_START: '自动标注开始', AUTO_LABEL_LLM_START: 'LLM 自动标注开始',
-            AUTO_LABEL_SAM3_START: 'SAM3 自动标注开始', AUTO_LABEL_CANCEL: '取消自动标注'
+            AUTO_LABEL_SAM3_START: 'SAM3 自动标注开始', AUTO_LABEL_CANCEL: '取消自动标注',
+            PROCESS_DATASET_START: '数据处理开始', PROCESS_DATASET_COMPLETE: '数据处理完成',
+            PROCESS_DATASET_FAILED: '数据处理失败', PROCESS_DATASET_CANCEL: '数据处理取消',
+            PROCESS_DATASET_CANCEL_REQUEST: '请求取消数据处理',
+            PROCESS_RESULT_DOWNLOAD: '下载处理结果', PROCESS_RESULT_DELETE: '删除处理结果'
         };
 
         function apiParams(extra = {}) {

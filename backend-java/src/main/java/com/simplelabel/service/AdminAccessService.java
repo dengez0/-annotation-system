@@ -1,37 +1,73 @@
 package com.simplelabel.service;
 
-import org.springframework.beans.factory.annotation.Value;
+import jakarta.servlet.http.Cookie;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.stereotype.Service;
 
 import java.net.InetAddress;
-import java.net.NetworkInterface;
-import java.net.SocketException;
-import java.util.Enumeration;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.Optional;
 
 @Service
 public class AdminAccessService {
-    private final String configuredAddress;
+    public static final String ADMIN_COOKIE_NAME = "simplelabel_admin_device";
+    public static final String CSRF_COOKIE_NAME = "simplelabel_admin_csrf";
+    public static final String LOCAL_BOOTSTRAP_DEVICE = "local-bootstrap";
 
-    public AdminAccessService(@Value("${simplelabel.admin-ip:}") String configuredAddress) {
-        this.configuredAddress = configuredAddress == null ? "" : configuredAddress.trim();
+    private final AdminTokenStore tokens;
+
+    public AdminAccessService(AdminTokenStore tokens) {
+        this.tokens = tokens;
     }
 
-    public boolean isAllowed(String clientIp) {
-        if (clientIp == null || clientIp.isBlank()) return false;
+    public boolean isAllowed(HttpServletRequest request) {
+        return deviceName(request).isPresent();
+    }
+
+    public Optional<String> deviceName(HttpServletRequest request) {
+        Optional<String> authenticated = tokens.authenticate(cookieValue(request, ADMIN_COOKIE_NAME));
+        if (authenticated.isPresent()) return authenticated;
+        return isLocalBootstrapRequest(request) ? Optional.of(LOCAL_BOOTSTRAP_DEVICE) : Optional.empty();
+    }
+
+    /**
+     * Allows only the host browser to create the very first administrator token.
+     * As soon as one device exists, loopback requests require a token like every
+     * other client.
+     */
+    public boolean isLocalBootstrapRequest(HttpServletRequest request) {
+        if (tokens.hasDevices() || request == null) return false;
         try {
-            InetAddress client = InetAddress.getByName(clientIp);
-            if (client.isLoopbackAddress()) return true;
-            if (!configuredAddress.isBlank() && client.getHostAddress().equals(
-                    InetAddress.getByName(configuredAddress).getHostAddress())) return true;
-            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
-            while (interfaces != null && interfaces.hasMoreElements()) {
-                NetworkInterface network = interfaces.nextElement();
-                Enumeration<InetAddress> addresses = network.getInetAddresses();
-                while (addresses.hasMoreElements()) {
-                    if (client.equals(addresses.nextElement())) return true;
-                }
-            }
-        } catch (Exception ignored) { }
-        return false;
+            return InetAddress.getByName(request.getRemoteAddr()).isLoopbackAddress();
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    public boolean isValidDeviceToken(String token) {
+        return tokens.authenticate(token).isPresent();
+    }
+
+    public boolean hasConfiguredDeviceTokens() {
+        return tokens.hasDevices();
+    }
+
+    public boolean isValidCsrf(HttpServletRequest request, String supplied) {
+        String cookie = cookieValue(request, CSRF_COOKIE_NAME);
+        if (cookie == null || supplied == null || cookie.length() != supplied.length()) return false;
+        return MessageDigest.isEqual(cookie.getBytes(StandardCharsets.UTF_8), supplied.getBytes(StandardCharsets.UTF_8));
+    }
+
+    public String csrfToken(HttpServletRequest request) {
+        return cookieValue(request, CSRF_COOKIE_NAME);
+    }
+
+    private static String cookieValue(HttpServletRequest request, String name) {
+        if (request == null || request.getCookies() == null) return null;
+        for (Cookie cookie : request.getCookies()) {
+            if (name.equals(cookie.getName())) return cookie.getValue();
+        }
+        return null;
     }
 }

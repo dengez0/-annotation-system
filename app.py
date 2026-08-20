@@ -1,8 +1,71 @@
 import logging
 import os
+from pathlib import Path
 import socket
+import subprocess
 import sys
 import time
+
+
+def _java_build_is_stale(root: Path) -> bool:
+    """Return True when the executable JAR is missing or older than its inputs."""
+    jar_path = root / 'backend-java' / 'target' / 'simplelabel-java-1.0.0-SNAPSHOT.jar'
+    if not jar_path.is_file():
+        return True
+
+    jar_mtime = jar_path.stat().st_mtime
+    build_inputs = [root / 'backend-java' / 'pom.xml']
+    build_inputs.extend(
+        path for path in (root / 'backend-java' / 'src').rglob('*') if path.is_file()
+    )
+    return any(path.stat().st_mtime > jar_mtime for path in build_inputs)
+
+
+def _run_current_java_server() -> int:
+    """Keep ``python app.py`` working as an entry point for the current Java app."""
+    root = Path(__file__).resolve().parent
+    if os.name != 'nt':
+        print(
+            'The current SimpleLabel server is the Java application. '
+            'On Linux, start it with the deployment service or java -jar.',
+            file=sys.stderr,
+        )
+        return 2
+
+    if _java_build_is_stale(root):
+        print('Java sources are newer than the executable JAR; rebuilding first...')
+        build_result = subprocess.run(
+            ['cmd.exe', '/d', '/c', str(root / 'build_java.bat')],
+            cwd=root,
+            check=False,
+        )
+        if build_result.returncode != 0:
+            return build_result.returncode
+
+    print('Starting the current Java version (compatibility command: python app.py)...')
+    try:
+        return subprocess.call(
+            [
+                'powershell.exe',
+                '-NoProfile',
+                '-ExecutionPolicy',
+                'Bypass',
+                '-File',
+                str(root / 'scripts' / 'run_java_backend.ps1'),
+                '-Mode',
+                'Production',
+            ],
+            cwd=root,
+        )
+    except KeyboardInterrupt:
+        return 130
+
+
+# ``python app.py`` used to start the retired Flask server. Keep that command as
+# a compatibility entry point, but send it to the current Java implementation.
+# The environment switch remains available for deliberate legacy debugging.
+if __name__ == '__main__' and os.environ.get('SIMPLELABEL_LEGACY_FLASK') != '1':
+    raise SystemExit(_run_current_java_server())
 
 from flask import Flask, request
 

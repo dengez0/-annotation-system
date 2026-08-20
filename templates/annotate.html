@@ -30,10 +30,10 @@
             <button class="toolbar-btn" onclick="openExportYoloModal()" title="Export JSON annotations to YOLO format TXT files">Export YOLO</button>
             <span style="flex:1;"></span>
             <button class="toolbar-paste-btn" id="paste-files-btn" onclick="pasteSelectedFiles()" title="Copy selected images and JSON files to paste image folder">📋 Paste</button>
-            {% if main_folder == 'annotation flies' %}
+            {% if main_folder == 'annotation files' %}
             <button class="toolbar-move-btn" id="move-files-btn" onclick="openMoveFilesModal()" title="Move selected images and JSON files to the matching moved image folder">📁 Move</button>
             {% elif main_folder == 'moved image' %}
-            <button class="toolbar-move-btn" id="restore-files-btn" onclick="openRestoreFilesModal()" title="Restore selected images and JSON files to the matching annotation flies folder">↩ Restore</button>
+            <button class="toolbar-move-btn" id="restore-files-btn" onclick="openRestoreFilesModal()" title="Restore selected images and JSON files to the matching annotation files folder">↩ Restore</button>
             {% endif %}
             <button class="toolbar-delete-btn" id="delete-files-btn" onclick="deleteSelectedFiles()" title="Delete selected images and JSON files">🗑 Delete</button>
         </div>

@@ -37,6 +37,18 @@ runs/
 # Keep the directory names documented in README, but do not commit real images/labels.
 data/*
 !data/.gitkeep
+!data/未标注/
+data/未标注/*
+!data/未标注/.gitkeep
+!data/标注中/
+data/标注中/*
+!data/标注中/.gitkeep
+!data/待检查/
+data/待检查/*
+!data/待检查/.gitkeep
+!data/已完成/
+data/已完成/*
+!data/已完成/.gitkeep
 processed/
 
 # Model weights and exported inference engines
@@ -69,6 +81,8 @@ models/*
 .env
 .env.*
 *.env
+deploy/docker/.env
+!deploy/docker/.env.example
 secrets.*
 *.key
 *.pem

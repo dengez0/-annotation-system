@@ -1,10 +1,22 @@
 # Direct runtime dependencies. Install only from the reviewed offline wheelhouse.
 # PyTorch must also be present in the wheelhouse; CPU is the required preview default.
 torch==2.7.1+cpu
+torchvision==0.22.1+cpu
 Flask==3.1.1
 waitress==3.0.2
-ultralytics==8.3.152
+ultralytics==8.4.47
 Pillow==11.2.1
 numpy==2.2.6
 opencv-python-headless==4.11.0.86
 PyYAML==6.0.2
+GitPython==3.1.44
+matplotlib==3.10.3
+psutil==7.0.0
+requests==2.32.4
+scipy==1.15.3
+tqdm==4.67.1
+pandas==2.3.0
+seaborn==0.13.2
+packaging==25.0
+setuptools==80.9.0
+urllib3==2.6.0

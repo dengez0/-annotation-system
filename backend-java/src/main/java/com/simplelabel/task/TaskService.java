@@ -36,7 +36,7 @@ public class TaskService {
     }
 
     @PreDestroy
-    void close() { executor.shutdownNow(); }
+    public void close() { executor.shutdownNow(); }
 
     public static final class TaskState {
         private String status = "running";
@@ -46,20 +46,36 @@ public class TaskService {
         private boolean cancel;
         private String error;
         private String backend;
+        private String stage = "queued";
+        private String operation;
+        private String resultId;
+        private Map<String, Object> summary = Map.of();
 
         TaskState(String backend) { this.backend = backend; }
         public synchronized boolean cancelled() { return cancel; }
-        public synchronized void cancel() { cancel = true; status = "cancelled"; }
+        public synchronized void cancel() { cancel = true; status = "cancelled"; stage = "cancelled"; }
         public synchronized void total(int value) { total = value; }
         public synchronized void progress(int value, int processed) { progress = value; processedCount = processed; }
         public synchronized void backend(String value) { backend = value; }
+        public synchronized void stage(String value) { stage = value; }
+        public synchronized void operation(String value) { operation = value; }
+        public synchronized void result(String value, Map<String, Object> valueSummary) {
+            resultId = value;
+            summary = valueSummary == null ? Map.of() : new LinkedHashMap<>(valueSummary);
+        }
         public synchronized void complete() { if (!cancel) status = "completed"; }
-        public synchronized void fail(Exception exception) { status = "failed"; error = exception.getMessage(); }
+        public synchronized void fail(Exception exception) {
+            status = "failed";
+            stage = "failed";
+            error = exception.getMessage();
+        }
         public synchronized Map<String, Object> snapshot() {
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("status", status); result.put("progress", progress); result.put("total", total);
             result.put("processed_count", processedCount); result.put("cancel", cancel);
             result.put("error", error); result.put("backend", backend);
+            result.put("stage", stage); result.put("operation", operation);
+            result.put("result_id", resultId); result.put("summary", summary);
             return result;
         }
     }

@@ -39,25 +39,38 @@ public class AnnotationService {
         return paths.safeDataPath(main, sub);
     }
 
-    public List<Map<String, Object>> listMainFolders() throws IOException {
+    public List<Map<String, Object>> listMainFolders(boolean includeCompleted) throws IOException {
         List<Map<String, Object>> result = new ArrayList<>();
+        for (WorkflowState state : WorkflowState.values()) {
+            if (state == WorkflowState.COMPLETED && !includeCompleted) continue;
+            result.add(mainFolder(state.directory(), false, state.id()));
+        }
         for (Path main : directories(paths.data())) {
-            List<Map<String, Object>> subfolders = listSubfolders(main.getFileName().toString());
-            int total = subfolders.stream().mapToInt(item -> ((Number) item.get("count")).intValue()).sum();
-            int annotated = subfolders.stream().mapToInt(item -> ((Number) item.get("annotated_count")).intValue()).sum();
-            Map<String, Object> item = new LinkedHashMap<>();
-            item.put("name", main.getFileName().toString());
-            item.put("subfolders", subfolders);
-            item.put("total_images", total);
-            item.put("total_annotated", annotated);
-            item.put("sub_count", subfolders.size());
-            result.add(item);
+            String name = main.getFileName().toString();
+            if (name.startsWith(".") || WorkflowState.fromDirectory(name).isPresent()) continue;
+            result.add(mainFolder(name, true, "legacy"));
         }
         return result;
     }
 
+    private Map<String, Object> mainFolder(String name, boolean legacy, String state) throws IOException {
+            List<Map<String, Object>> subfolders = listSubfolders(name);
+            int total = subfolders.stream().mapToInt(item -> ((Number) item.get("count")).intValue()).sum();
+            int annotated = subfolders.stream().mapToInt(item -> ((Number) item.get("annotated_count")).intValue()).sum();
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("name", name);
+            item.put("subfolders", subfolders);
+            item.put("total_images", total);
+            item.put("total_annotated", annotated);
+            item.put("sub_count", subfolders.size());
+            item.put("legacy", legacy);
+            item.put("workflow_state", state);
+            return item;
+    }
+
     public List<String> listProjects() throws IOException {
-        return directories(paths.data()).stream().map(path -> path.getFileName().toString()).sorted().toList();
+        return directories(paths.data()).stream().map(path -> path.getFileName().toString())
+                .filter(name -> !name.startsWith(".")).sorted().toList();
     }
 
     public List<Map<String, Object>> listSubfolders(String main) throws IOException {
@@ -68,7 +81,7 @@ public class AnnotationService {
         for (Path sub : directories(mainPath)) {
             int count = countImages(sub);
             result.add(Map.of("name", sub.getFileName().toString(), "count", count,
-                    "annotated_count", countAnnotatedImages(sub)));
+                    "annotated_count", countAnnotatedImages(main, sub)));
         }
         return result;
     }
@@ -81,7 +94,7 @@ public class AnnotationService {
             String name = path.getFileName().toString();
             if (!isImage(name)) continue;
             String stem = stem(name);
-            result.add(Map.of("name", name, "processed", Files.exists(project.resolve(stem + ".json"))));
+            result.add(Map.of("name", name, "processed", Files.exists(annotationPath(main, sub, name))));
         }
         return result;
     }
@@ -90,7 +103,7 @@ public class AnnotationService {
         Path project = projectPath(main, sub);
         if (!Files.isDirectory(project)) return List.of();
         Set<String> labels = new TreeSet<>();
-        for (Path path : files(project)) {
+        for (Path path : files(annotationDirectory(main, sub))) {
             if (!path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".json")) continue;
             try {
                 JsonNode root = mapper.readTree(path.toFile());
@@ -104,7 +117,7 @@ public class AnnotationService {
     }
 
     public Map<String, String> getLabelColors(String main, String sub) throws IOException {
-        Path file = projectPath(main, sub).resolve(LABEL_COLORS_FILE);
+        Path file = annotationDirectory(main, sub).resolve(LABEL_COLORS_FILE);
         if (!Files.isRegularFile(file)) return new LinkedHashMap<>();
         try {
             Map<String, String> input = mapper.readValue(file.toFile(), new TypeReference<>() {});
@@ -126,14 +139,34 @@ public class AnnotationService {
         if (!LABEL_COLORS.contains(normalized)) throw new IllegalArgumentException("Unsupported label color");
         Map<String, String> colors = getLabelColors(main, sub);
         colors.put(label, normalized);
-        atomicWrite(projectPath(main, sub).resolve(LABEL_COLORS_FILE), mapper.writerWithDefaultPrettyPrinter().writeValueAsBytes(colors));
+        atomicWrite(annotationDirectory(main, sub).resolve(LABEL_COLORS_FILE), mapper.writerWithDefaultPrettyPrinter().writeValueAsBytes(colors));
         return colors;
     }
 
     public void saveAnnotation(String main, String sub, String filename, JsonNode json) throws IOException {
         String safeName = fileName(filename);
-        atomicWrite(projectPath(main, sub).resolve(stem(safeName) + ".json"),
+        atomicWrite(annotationDirectory(main, sub).resolve(stem(safeName) + ".json"),
                 mapper.writerWithDefaultPrettyPrinter().writeValueAsBytes(json));
+    }
+
+    public JsonNode readAnnotation(String main, String sub, String filename) throws IOException {
+        Path file = annotationPath(main, sub, filename);
+        if (!Files.isRegularFile(file)) return null;
+        return mapper.readTree(file.toFile());
+    }
+
+    public Path annotationPath(String main, String sub, String imageOrJsonName) {
+        String safeName = fileName(imageOrJsonName);
+        String jsonName = safeName.toLowerCase(Locale.ROOT).endsWith(".json")
+                ? safeName : stem(safeName) + ".json";
+        return annotationDirectory(main, sub).resolve(jsonName);
+    }
+
+    public Path annotationDirectory(String main, String sub) {
+        Path project = projectPath(main, sub);
+        Optional<WorkflowState> state = WorkflowState.fromDirectory(main);
+        if (state.isPresent() && state.get() != WorkflowState.COMPLETED) return project.resolve("label");
+        return project;
     }
 
     public Map<String, Object> createEmptyJsons(String main, String sub) throws IOException {
@@ -143,7 +176,7 @@ public class AnnotationService {
         for (Path image : files(project)) {
             String name = image.getFileName().toString();
             if (!isImage(name)) continue;
-            Path jsonPath = project.resolve(stem(name) + ".json");
+            Path jsonPath = annotationPath(main, sub, name);
             if (Files.exists(jsonPath)) { skipped++; continue; }
             try {
                 BufferedImage buffered = ImageIO.read(image.toFile());
@@ -186,11 +219,19 @@ public class AnnotationService {
         return IMAGE_EXTENSIONS.stream().anyMatch(lower::endsWith);
     }
 
-    private static int countAnnotatedImages(Path folder) throws IOException {
+    public int countImages(String main, String sub) throws IOException {
+        return countImages(projectPath(main, sub));
+    }
+
+    public int countAnnotatedImages(String main, String sub) throws IOException {
+        return countAnnotatedImages(main, projectPath(main, sub));
+    }
+
+    private int countAnnotatedImages(String main, Path folder) throws IOException {
         int annotated = 0;
         for (Path path : files(folder)) {
             String name = path.getFileName().toString();
-            if (isImage(name) && Files.isRegularFile(folder.resolve(stem(name) + ".json"))) annotated++;
+            if (isImage(name) && Files.isRegularFile(annotationPath(main, folder.getFileName().toString(), name))) annotated++;
         }
         return annotated;
     }

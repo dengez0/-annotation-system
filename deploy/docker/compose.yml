@@ -1,0 +1,36 @@
+services:
+  simplelabel:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    image: simplelabel:local
+    container_name: simplelabel
+    restart: unless-stopped
+    user: "${SIMPLELABEL_UID:-1000}:${SIMPLELABEL_GID:-1000}"
+    env_file:
+      - .env
+    environment:
+      TZ: "${SIMPLELABEL_TIME_ZONE:-Asia/Shanghai}"
+    ports:
+      - "0.0.0.0:${SIMPLELABEL_PORT:-18083}:18083"
+    volumes:
+      - ../../runtime/data:/srv/simplelabel/data
+      - ../../runtime/models:/srv/simplelabel/models
+      - ../../runtime/logs:/srv/simplelabel/logs
+      - ../../runtime/admin:/srv/simplelabel/admin
+      - ../../runtime/processed:/srv/simplelabel/processed
+    tmpfs:
+      - /tmp:size=2g,mode=1777
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--max-time", "5", "http://127.0.0.1:18083/internal/health"]
+      interval: 30s
+      timeout: 6s
+      retries: 5
+      start_period: 90s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 512
+    mem_limit: 9g
+    cpus: 4.0

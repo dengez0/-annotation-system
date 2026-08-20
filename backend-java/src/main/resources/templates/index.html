@@ -58,7 +58,7 @@
         }
         .upload-section h3 { margin: 0 0 10px 0; font-size: 16px; }
         .upload-section p { font-size: 13px; }
-        .upload-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        .upload-row { display: flex; gap: 10px; align-items: center; justify-content: center; flex-wrap: wrap; }
         .upload-row input[type="text"] { padding: 8px 12px; background: var(--input-bg); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px; font-size: 14px; }
         .upload-target-label { color: var(--text-dim); font-size: 14px; white-space: nowrap; }
         .upload-target-val { color: var(--accent-blue); font-weight: 600; font-size: 14px; }
@@ -69,12 +69,14 @@
 </head>
 <body class="dark">
     <div class="container">
-        <h1 th:text="${dataProcessing} ? '数据处理' : 'KINTH 2D Annotation System'">KINTH 2D Annotation System</h1>
+        <h1 th:text="${dataProcessing} ? '数据处理' : '数据标注'">数据标注</h1>
 
         <div class="index-top-actions">
             <button onclick="location.href='/'" class="toolbar-btn" style="padding:8px 20px;font-size:14px;">Home</button>
-            <button th:unless="${dataProcessing}" onclick="location.href='/work-logs'" class="toolbar-btn accent-purple" style="padding:8px 20px;font-size:14px;">📊 工作日志</button>
-            <button onclick="toggleUploadMode()" id="toggle-upload-btn" class="toolbar-btn accent-green" style="padding:8px 20px;font-size:14px;">📁 上传文件夹</button>
+            <button th:if="${isAdmin}" onclick="location.href='/work-logs'" class="toolbar-btn accent-purple" style="padding:8px 20px;font-size:14px;">📊 工作日志</button>
+            <button th:if="${isAdmin}" onclick="location.href='/admin/tokens'" class="toolbar-btn accent-purple" style="padding:8px 20px;font-size:14px;">🔑 令牌管理</button>
+            <button th:if="${adminDeviceTokenEnabled and !isAdmin}" onclick="location.href='/admin/activate'" class="toolbar-btn accent-purple" style="padding:8px 20px;font-size:14px;">🔑 激活管理员设备</button>
+            <button onclick="toggleUploadMode()" id="toggle-upload-btn" class="toolbar-btn accent-green" style="padding:8px 20px;font-size:14px;">📁 上传任务文件夹</button>
         </div>
 
         <div th:if="${dataProcessing}" id="processing-label-modal" class="modal" style="display:none;">
@@ -86,23 +88,13 @@
         </div>
 
         <div class="upload-section" id="upload-section" style="display:none;">
-            <h3>上传数据集</h3>
+            <h3>上传标注任务</h3>
             <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px 0;">
-                点击下方主文件夹选中上传目标，输入子文件夹名称，选择文件即可上传。
+                选择一个图片文件夹。顶层文件夹名将作为任务名，上传完成后自动进入“未标注”。
             </p>
-            <div style="display:flex;gap:6px;align-items:center;margin-bottom:10px;">
-                <span style="color:var(--text-dim);font-size:13px;">上传模式：</span>
-                <button id="mode-folder-btn" onclick="setUploadMode('folder')" class="btn-icon" style="background:var(--accent-blue);color:#fff;border-color:var(--accent-blue);">📁 文件夹</button>
-                <button id="mode-files-btn" onclick="setUploadMode('files')" class="btn-icon">🎬 视频 / TXT</button>
-            </div>
             <div class="upload-row">
-                <span class="upload-target-label">目标：</span>
-                <span class="upload-target-val" id="upload-target-display">未选择</span>
-                <span style="color:var(--text-dim);">/</span>
-                <input type="text" id="subfolder-input" placeholder="子文件夹名称" style="flex:1;min-width:140px;" disabled>
-                <input type="file" id="file-input-folder" webkitdirectory directory multiple disabled>
-                <input type="file" id="file-input-files" multiple accept=".mp4,.avi,.mov,.mkv,.wmv,.flv,.ts,.m4v,.txt" disabled style="display:none;">
-                <button onclick="uploadFiles()" id="upload-btn" disabled style="padding:8px 20px;background:var(--accent-green);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:14px;font-weight:600;opacity:0.5;">上传</button>
+                <input type="file" id="file-input-folder" webkitdirectory directory multiple>
+                <button onclick="uploadFiles()" id="upload-btn" style="padding:8px 20px;background:var(--accent-green);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:14px;font-weight:600;">上传</button>
             </div>
             <div id="upload-status" style="margin-top:6px;font-size:12px;"></div>
         </div>
@@ -112,11 +104,12 @@
                 <div class="main-folder-header" th:attr="data-folder=${mf.name},data-index=${stat.count}" onclick="onMainFolderClick(this.dataset.folder, this, this.dataset.index)">
                     <span class="main-folder-icon">&#128193;</span>
                     <div class="main-folder-info">
-                        <div class="main-folder-name" th:text="${mf.name}"></div>
-                        <div class="main-folder-meta"><span th:text="${mf.sub_count}"></span> 个子文件夹 &middot; <span th:if="${dataProcessing}">已标注 <span th:text="${mf.total_annotated}"></span> / 共 <span th:text="${mf.total_images}"></span> 张</span><span th:unless="${dataProcessing}"><span th:text="${mf.total_images}"></span> 张图片</span></div>
+                        <div class="main-folder-name"><span th:text="${mf.name}"></span><span th:if="${mf.legacy}" style="font-size:11px;color:var(--text-dim);margin-left:8px;">历史数据 · 只读</span></div>
+                        <div class="main-folder-meta" th:if="${mf.workflow_state == 'unlabeled'}"><span th:text="${mf.sub_count}"></span> 个任务 · <span th:text="${mf.total_images}"></span> 张图片</div>
+                        <div class="main-folder-meta" th:unless="${mf.workflow_state == 'unlabeled'}"><span th:text="${mf.sub_count}"></span> 个任务 · 已标注 <span th:text="${mf.total_annotated}"></span> / <span th:text="${mf.total_images}"></span> 张</div>
                     </div>
                     <div class="main-folder-actions" onclick="event.stopPropagation()">
-                        <button class="btn-icon" title="重命名" th:attr="data-name=${mf.name}" onclick="renameProject(this.dataset.name)">&#9999;</button>
+                        <span th:if="${mf.legacy}" style="font-size:11px;color:var(--text-dim);">只读</span>
                     </div>
                     <span class="main-folder-arrow" th:attr="data-index=${stat.count}" onclick="event.stopPropagation(); toggleFolder(this.dataset.index)">&#9654;</span>
                 </div>
@@ -126,10 +119,13 @@
                         <span class="subfolder-name">
                             <a th:href="@{/annotate/{main}/{sub}(main=${mf.name},sub=${sf.name})}" th:text="${sf.name}"></a>
                         </span>
-                        <span class="subfolder-count"><span th:if="${dataProcessing}">已标注 <span th:text="${sf.annotated_count}"></span> / 共 <span th:text="${sf.count}"></span> 张</span><span th:unless="${dataProcessing}"><span th:text="${sf.count}"></span> 张</span></span>
+                        <span class="subfolder-count" th:if="${mf.workflow_state == 'unlabeled'}"><span th:text="${sf.count}"></span> 张图片</span>
+                        <span class="subfolder-count" th:unless="${mf.workflow_state == 'unlabeled'}">已标注 <span th:text="${sf.annotated_count}"></span> / <span th:text="${sf.count}"></span> 张</span>
                         <span class="subfolder-actions">
-                            <button class="btn-icon export" title="导出" th:attr="data-main=${mf.name},data-sub=${sf.name}" onclick="event.stopPropagation(); exportSubProject(this.dataset.main, this.dataset.sub)">&#11015;</button>
-                            <button class="btn-icon" title="重命名" th:attr="data-main=${mf.name},data-sub=${sf.name}" onclick="event.stopPropagation(); renameSubProject(this.dataset.main, this.dataset.sub)">&#9999;</button>
+                            <button th:if="${mf.workflow_state == 'annotating'}" class="btn-icon" th:attr="data-task=${sf.name}" onclick="event.stopPropagation(); transitionTask(this.dataset.task, 'annotating', 'review')">Done</button>
+                            <button th:if="${mf.workflow_state == 'review'}" class="btn-icon" th:attr="data-task=${sf.name}" onclick="event.stopPropagation(); transitionTask(this.dataset.task, 'review', 'completed')">Done</button>
+                            <button th:if="${isAdmin}" class="btn-icon export" title="导出" th:attr="data-main=${mf.name},data-sub=${sf.name}" onclick="event.stopPropagation(); exportSubProject(this.dataset.main, this.dataset.sub)">&#11015;</button>
+                            <button th:unless="${mf.legacy}" class="btn-icon" title="重命名" th:attr="data-main=${mf.name},data-sub=${sf.name}" onclick="event.stopPropagation(); renameSubProject(this.dataset.main, this.dataset.sub)">&#9999;</button>
                         </span>
                     </div>
                     <div class="subfolder-item" th:if="${#lists.isEmpty(mf.subfolders)}" style="color:var(--text-dim);cursor:default;font-size:12px;">
@@ -144,125 +140,19 @@
     </div>
 
     <script th:inline="javascript">
-        let selectedMainFolder = null;
-        let uploadMode = 'folder';
-        const IS_DATA_PROCESSING = /*[[${dataProcessing}]]*/ false;
-        let processingTarget = null;
-        let processingLabels = [];
-        let processingOrder = [];
-
-        function setUploadMode(mode) {
-            uploadMode = mode;
-            const folderInput = document.getElementById('file-input-folder');
-            const filesInput = document.getElementById('file-input-files');
-            const folderBtn = document.getElementById('mode-folder-btn');
-            const filesBtn = document.getElementById('mode-files-btn');
-
-            if (mode === 'folder') {
-                folderInput.style.display = '';
-                filesInput.style.display = 'none';
-                folderBtn.style.background = 'var(--accent-blue)';
-                folderBtn.style.color = '#fff';
-                folderBtn.style.borderColor = 'var(--accent-blue)';
-                filesBtn.style.background = '';
-                filesBtn.style.color = '';
-                filesBtn.style.borderColor = '';
-            } else {
-                folderInput.style.display = 'none';
-                filesInput.style.display = '';
-                filesBtn.style.background = 'var(--accent-blue)';
-                filesBtn.style.color = '#fff';
-                filesBtn.style.borderColor = 'var(--accent-blue)';
-                folderBtn.style.background = '';
-                folderBtn.style.color = '';
-                folderBtn.style.borderColor = '';
-            }
-            folderInput.value = '';
-            filesInput.value = '';
-            document.getElementById('upload-status').innerText = '';
-            updateUploadTarget();
-        }
-
         function toggleUploadMode() {
             const section = document.getElementById('upload-section');
-            const btn = document.getElementById('toggle-upload-btn');
-            const isOpen = section.style.display !== 'none';
-
-            if (isOpen) {
-                section.style.display = 'none';
-                btn.textContent = '📁 上传文件夹';
-                btn.classList.remove('accent-red');
-                btn.classList.add('accent-green');
-                // Deselect
-                selectedMainFolder = null;
-                document.querySelectorAll('.main-folder-header').forEach(h => h.style.background = '');
-                updateUploadTarget();
-            } else {
-                section.style.display = 'block';
-                btn.textContent = '✕ 退出上传';
-                btn.classList.remove('accent-green');
-                btn.classList.add('accent-red');
-                section.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            }
+            const button = document.getElementById('toggle-upload-btn');
+            const opening = section.style.display === 'none';
+            section.style.display = opening ? 'block' : 'none';
+            button.textContent = opening ? '✕ 退出上传' : '📁 上传任务文件夹';
+            button.classList.toggle('accent-green', !opening);
+            button.classList.toggle('accent-red', opening);
+            if (opening) section.scrollIntoView({behavior: 'smooth', block: 'start'});
         }
 
         function onMainFolderClick(folderName, headerEl, idx) {
-            // In upload mode: select as target
-            const uploadSection = document.getElementById('upload-section');
-            if (uploadSection.style.display !== 'none') {
-                document.querySelectorAll('.main-folder-header').forEach(h => h.style.background = '');
-                if (selectedMainFolder === folderName) {
-                    selectedMainFolder = null;
-                } else {
-                    selectedMainFolder = folderName;
-                    headerEl.style.background = 'rgba(34,197,94,0.10)';
-                }
-                updateUploadTarget();
-            } else {
-                // Normal mode: toggle subfolder list
-                toggleFolder(idx);
-            }
-        }
-
-        document.getElementById('file-input-folder').addEventListener('change', function(e) {
-            const input = e.target;
-            const subInput = document.getElementById('subfolder-input');
-            if (input.files && input.files.length > 0 && !subInput.value) {
-                const firstFile = input.files[0];
-                const relativePath = firstFile.webkitRelativePath;
-                if (relativePath) {
-                    const parts = relativePath.split('/');
-                    // parts[0] is the top-level folder name
-                    if (parts.length >= 1 && parts[0]) subInput.value = parts[0];
-                }
-            }
-        });
-
-        function updateUploadTarget() {
-            const display = document.getElementById('upload-target-display');
-            const subInput = document.getElementById('subfolder-input');
-            const folderInput = document.getElementById('file-input-folder');
-            const filesInput = document.getElementById('file-input-files');
-            const uploadBtn = document.getElementById('upload-btn');
-
-            if (selectedMainFolder) {
-                display.textContent = selectedMainFolder;
-                display.style.color = 'var(--accent-green)';
-                subInput.disabled = false;
-                folderInput.disabled = uploadMode !== 'folder';
-                filesInput.disabled = uploadMode !== 'files';
-                uploadBtn.disabled = false;
-                uploadBtn.style.opacity = '1';
-            } else {
-                display.textContent = '未选择';
-                display.style.color = 'var(--text-dim)';
-                subInput.disabled = true;
-                subInput.value = '';
-                folderInput.disabled = true;
-                filesInput.disabled = true;
-                uploadBtn.disabled = true;
-                uploadBtn.style.opacity = '0.5';
-            }
+            toggleFolder(idx);
         }
 
         function toggleFolder(idx) {
@@ -281,44 +171,35 @@
         }
 
         async function uploadFiles() {
-            const input = uploadMode === 'folder'
-                ? document.getElementById('file-input-folder')
-                : document.getElementById('file-input-files');
-            const subInput = document.getElementById('subfolder-input');
+            const input = document.getElementById('file-input-folder');
             const status = document.getElementById('upload-status');
-
-            if (!selectedMainFolder) return alert("请先点击选择一个主文件夹作为上传目标");
-            if (input.files.length === 0) return alert(uploadMode === 'folder' ? "请选择要上传的文件夹" : "请选择要上传的文件");
-
-            const mainFolder = selectedMainFolder;
-            const subfolder = subInput.value.trim() || 'default';
+            if (input.files.length === 0) return alert('请选择要上传的图片文件夹');
+            const firstPath = input.files[0].webkitRelativePath || input.files[0].name;
+            const taskName = firstPath.split('/')[0];
+            if (!taskName) return alert('无法识别任务文件夹名称');
             const totalFiles = input.files.length;
-            const batchSize = uploadMode === 'folder' ? 20 : 1;
+            const batchSize = 20;
+            const uploadId = (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(16).slice(2));
             let uploadedCount = 0;
-
-            status.innerText = `准备上传 ${totalFiles} 个文件到 ${mainFolder}/${subfolder}...`;
+            const cancelUpload = () => fetch(`/api/annotation-upload/${encodeURIComponent(uploadId)}`, {method:'DELETE'}).catch(() => {});
+            status.innerText = `准备上传 ${taskName}（${totalFiles} 个文件）到未标注...`;
             status.style.color = 'var(--text-secondary)';
 
             for (let i = 0; i < totalFiles; i += batchSize) {
                 const chunk = Array.from(input.files).slice(i, i + batchSize);
                 const formData = new FormData();
-                formData.append('main_folder', mainFolder);
-                formData.append('subfolder', subfolder);
+                formData.append('task_name', taskName);
+                formData.append('upload_id', uploadId);
+                formData.append('complete', String(i + batchSize >= totalFiles));
                 const paths = [];
                 chunk.forEach(file => {
                     formData.append('files[]', file);
                     paths.push(file.webkitRelativePath || file.name);
                 });
                 formData.append('file_paths', JSON.stringify(paths));
-                formData.append('upload_manifest', encodeUploadManifest({
-                    main_folder: mainFolder,
-                    subfolder: subfolder,
-                    paths: paths,
-                }));
-
                 try {
                     status.innerText = `上传中 ${i + 1}-${Math.min(i + batchSize, totalFiles)} / ${totalFiles}...`;
-                    const res = await fetch('/upload', { method: 'POST', body: formData });
+                    const res = await fetch('/api/annotation-upload', { method: 'POST', body: formData });
                     const text = await res.text();
                     let data;
                     try {
@@ -329,31 +210,45 @@
                         status.style.color = 'var(--accent-red)';
                         return;
                     }
-                    if (data.status !== 'success') {
-                        status.innerText = `上传出错: ` + data.error;
+                    if (!res.ok || data.status !== 'success') {
+                        await cancelUpload();
+                        status.innerText = `上传出错: ` + (data.error || `HTTP ${res.status}`);
                         status.style.color = 'var(--accent-red)';
                         return;
                     }
-                    uploadedCount += chunk.length;
+                    uploadedCount += Number(data.count || 0);
                 } catch (e) {
+                    await cancelUpload();
                     status.innerText = `网络错误: ` + e;
                     status.style.color = 'var(--accent-red)';
                     return;
                 }
             }
 
-            status.innerText = "上传完成！";
+            status.innerText = `上传完成：${taskName} 已进入未标注。`;
             status.style.color = 'var(--accent-green)';
-            if (IS_DATA_PROCESSING && uploadMode === 'folder') await openDatasetProcessing(mainFolder, subfolder, status);
-            else { alert(`成功上传 ${uploadedCount} 个文件到 ${mainFolder}/${subfolder}！`); location.reload(); }
+            alert(`成功上传 ${uploadedCount} 个文件，任务已进入“未标注”。`);
+            location.reload();
         }
 
-        async function openDatasetProcessing(mainFolder, subfolder, status) { processingTarget={mainFolder,subfolder}; try { status.innerText='正在读取标签…'; const response=await fetch(`/api/data_processing/labels/${encodeURIComponent(mainFolder)}/${encodeURIComponent(subfolder)}`); const data=await response.json(); if(!response.ok)throw new Error(data.error||'读取标签失败'); processingLabels=data.labels||[];processingOrder=[];const list=document.getElementById('processing-label-list');list.innerHTML='';processingLabels.forEach(label=>{const button=document.createElement('button');button.type='button';button.className='processing-label-choice';button.textContent=label;button.onclick=()=>selectProcessingLabel(label,button);list.appendChild(button);});document.getElementById('processing-label-modal').style.display='block';updateProcessingLabelStatus();}catch(error){status.innerText='上传成功，但无法启动处理：'+error.message;status.style.color='var(--accent-red)';}}
-        function selectProcessingLabel(label,button){if(processingOrder.includes(label))return;processingOrder.push(label);button.classList.add('selected');button.textContent=`${processingOrder.length}. ${label}`;updateProcessingLabelStatus();}
-        function updateProcessingLabelStatus(){const complete=processingOrder.length===processingLabels.length;document.getElementById('processing-label-status').textContent=processingLabels.length?`已选择 ${processingOrder.length} / ${processingLabels.length}`:'未发现非 mask 标签，将只生成空 TXT。';document.getElementById('processing-start-btn').disabled=!complete;}
-        function closeProcessingLabelModal(){document.getElementById('processing-label-modal').style.display='none';location.reload();}
-        async function startDatasetProcessing(){const status=document.getElementById('processing-label-status');document.getElementById('processing-start-btn').disabled=true;try{const response=await fetch(`/api/data_processing/process/${encodeURIComponent(processingTarget.mainFolder)}/${encodeURIComponent(processingTarget.subfolder)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({labels:processingOrder})});const data=await response.json();if(!response.ok)throw new Error(data.error||'无法开始处理');status.textContent='处理任务已启动，页面将显示进度。';pollDatasetProcessing(data.task_id,status);}catch(error){status.textContent='处理启动失败：'+error.message;document.getElementById('processing-start-btn').disabled=false;}}
-        async function pollDatasetProcessing(taskId,status){const response=await fetch(`/api/task_status/${encodeURIComponent(taskId)}`);const task=await response.json();if(!response.ok){status.textContent=task.error||'读取任务状态失败';return;}status.textContent=`正在处理：${task.progress||0} / ${task.total||0}`;if(task.status==='completed'){status.textContent=`处理完成，已交付 ${task.processed_count} 张图片。`;return;}if(task.status==='failed'||task.status==='cancelled'){status.textContent=`处理${task.status==='failed'?'失败':'已取消'}：${task.error||''}`;return;}setTimeout(()=>pollDatasetProcessing(taskId,status),1000);}
+        async function transitionTask(task, from, to, allowIncomplete = false) {
+            const label = to === 'review' ? '提交到待检查' : '完成检查并进入已完成';
+            if (!confirm(`确认${label}：${task}？`)) return;
+            const response = await fetch(`/api/workflow/tasks/${encodeURIComponent(task)}/transition`, {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({from, to, allow_incomplete: allowIncomplete})
+            });
+            const data = await response.json();
+            if (response.status === 409 && !allowIncomplete) {
+                if (confirm(`${data.error || '仍有图片没有 JSON'}。是否仍要继续？`)) {
+                    return transitionTask(task, from, to, true);
+                }
+                return;
+            }
+            if (!response.ok) return alert(data.error || '状态更新失败');
+            alert('任务状态已更新。');
+            location.reload();
+        }
 
         async function renameProject(oldName) {
             const newName = prompt("请输入新的主文件夹名称:", oldName);

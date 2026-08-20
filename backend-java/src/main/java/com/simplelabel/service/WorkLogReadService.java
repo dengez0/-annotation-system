@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -19,11 +20,15 @@ public class WorkLogReadService {
     private static final DateTimeFormatter FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final Set<String> RANGES = Set.of("today", "yesterday", "7d", "date", "all");
     private final WorkLogService workLog;
+    private final Clock clock;
 
-    public WorkLogReadService(WorkLogService workLog) { this.workLog = workLog; }
+    public WorkLogReadService(WorkLogService workLog, Clock clock) {
+        this.workLog = workLog;
+        this.clock = clock;
+    }
 
     public Map<String, Object> overview(String range, String date, String ip, String project, String action) throws IOException {
-        List<Event> events = filter(range, date, ip, project, action, LocalDateTime.now());
+        List<Event> events = filter(range, date, ip, project, action, LocalDateTime.now(clock));
         Map<String, IpSummary> byIp = new HashMap<>();
         Set<ImageKey> annotatedImages = new HashSet<>();
         int movedImages = 0;
@@ -62,7 +67,7 @@ public class WorkLogReadService {
 
     public Map<String, Object> detail(String workerIp, String range, String date,
                                       String project, String action, int limit) throws IOException {
-        List<Event> events = filter(range, date, workerIp, project, action, LocalDateTime.now());
+        List<Event> events = filter(range, date, workerIp, project, action, LocalDateTime.now(clock));
         Map<String, ProjectSummary> projects = new HashMap<>();
         for (Event event : events) {
             ProjectSummary summary = projects.computeIfAbsent(event.project, ignored -> new ProjectSummary());
@@ -103,7 +108,7 @@ public class WorkLogReadService {
     }
 
     private Map<String, Object> filterOptions(String range, String date) throws IOException {
-        List<Event> events = filter(range, date, null, null, null, LocalDateTime.now());
+        List<Event> events = filter(range, date, null, null, null, LocalDateTime.now(clock));
         Set<String> ips = new TreeSet<>(), projects = new TreeSet<>(), actions = new TreeSet<>();
         for (Event event : events) {
             ips.add(event.ip); if (!event.project.equals("-")) projects.add(event.project); actions.add(event.action);

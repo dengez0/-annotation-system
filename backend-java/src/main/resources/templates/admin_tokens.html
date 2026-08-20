@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理员令牌管理</title>
+    <link rel="stylesheet" href="/static/css/style.css?v=8">
+    <style>
+        body {
+            min-height: 100vh;
+            background:
+                radial-gradient(circle at 12% 0%, rgba(124, 58, 237, 0.10), transparent 34rem),
+                var(--bg-main);
+        }
+        button, input { font: inherit; }
+        .shell { width:min(100% - 32px, 1040px); margin:0 auto; padding:38px 0 56px; }
+        .page-header {
+            display:flex; align-items:flex-start; justify-content:space-between; gap:24px;
+            margin-bottom:22px; padding-bottom:22px; border-bottom:1px solid var(--border-color);
+        }
+        .eyebrow {
+            margin:0 0 8px; color:#a78bfa; font-size:12px; font-weight:700;
+            letter-spacing:.12em; text-transform:uppercase;
+        }
+        .page-header h1 { margin:0; color:#f3f4f6; font-size:clamp(25px, 4vw, 34px); line-height:1.2; }
+        .page-description { max-width:650px; margin:10px 0 0; color:var(--text-secondary); line-height:1.65; }
+        .header-actions { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+        .panel {
+            margin-bottom:18px; padding:24px; overflow:hidden;
+            background:rgba(37, 37, 37, .94); border:1px solid var(--border-color);
+            border-radius:12px; box-shadow:0 18px 50px rgba(0, 0, 0, .18);
+        }
+        .panel-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:20px; }
+        .panel-heading h2 { margin:0; color:#e5e7eb; font-size:18px; }
+        .panel-heading p { margin:7px 0 0; color:var(--text-secondary); font-size:13px; line-height:1.55; }
+        .device-badge, .current {
+            display:inline-flex; align-items:center; gap:6px; width:max-content;
+            border:1px solid rgba(34,197,94,.34); border-radius:999px;
+            background:rgba(34,197,94,.10); color:#86efac; font-size:12px; font-weight:700;
+        }
+        .device-badge { margin-top:14px; padding:6px 10px; }
+        .device-badge::before, .current::before {
+            content:""; width:6px; height:6px; border-radius:50%; background:#4ade80;
+            box-shadow:0 0 0 3px rgba(74,222,128,.12);
+        }
+        .current { margin-left:8px; padding:3px 8px; vertical-align:middle; }
+        .form-row { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:12px; align-items:end; }
+        .field { display:flex; flex-direction:column; gap:8px; }
+        .field label { color:#d1d5db; font-size:13px; font-weight:600; }
+        .field input {
+            width:100%; min-width:0; padding:11px 13px; outline:none;
+            border:1px solid var(--border-light); border-radius:6px;
+            background:var(--bg-input); color:#f3f4f6; caret-color:#a78bfa;
+            transition:border-color .15s, box-shadow .15s, background .15s;
+        }
+        .field input::placeholder { color:var(--text-dim); }
+        .field input:hover { background:#424242; }
+        .field input:focus { border-color:#8b5cf6; box-shadow:0 0 0 3px rgba(139,92,246,.15); }
+        .button {
+            display:inline-flex; align-items:center; justify-content:center; gap:7px;
+            min-height:40px; padding:9px 15px; border:1px solid var(--border-light);
+            border-radius:6px; background:var(--bg-toolbar); color:#d1d5db;
+            cursor:pointer; text-decoration:none; font-size:13px; font-weight:600;
+            transition:background .15s, border-color .15s, color .15s, transform .15s;
+        }
+        .button:hover { background:var(--bg-hover); border-color:#5a5a5a; color:#fff; }
+        .button:active { transform:translateY(1px); }
+        .button:focus-visible { outline:2px solid #8b5cf6; outline-offset:2px; }
+        .button-primary { border-color:#7c3aed; background:#6d28d9; color:#fff; }
+        .button-primary:hover { border-color:#8b5cf6; background:#7c3aed; }
+        .button-danger { min-height:32px; padding:6px 11px; border-color:rgba(248,113,113,.45); background:transparent; color:#fca5a5; }
+        .button-danger:hover { border-color:#dc3545; background:rgba(220,53,69,.16); color:#fecaca; }
+        .button:disabled { cursor:not-allowed; opacity:.42; transform:none; }
+        .error { min-height:20px; margin:9px 0 0; color:#fca5a5; font-size:13px; }
+        .token-result {
+            display:none; margin-top:18px; padding:18px;
+            border:1px solid rgba(34,197,94,.42); border-radius:8px;
+            background:linear-gradient(135deg, rgba(22,163,74,.12), rgba(22,163,74,.04));
+        }
+        .token-result-title { display:flex; align-items:center; gap:8px; color:#bbf7d0; }
+        .token-result p { margin:7px 0 0; color:#86efac; font-size:13px; }
+        .token-value {
+            display:block; margin:14px 0; padding:13px 14px; overflow-wrap:anywhere;
+            border:1px solid rgba(255,255,255,.08); border-radius:6px;
+            background:#171717; color:#d8b4fe; font-size:13px; line-height:1.55;
+            user-select:all;
+        }
+        .token-actions { display:flex; gap:8px; flex-wrap:wrap; }
+        .table-wrap { overflow-x:auto; border:1px solid var(--border-color); border-radius:8px; }
+        table { width:100%; min-width:620px; border-collapse:collapse; }
+        th, td { padding:13px 15px; text-align:left; border-bottom:1px solid var(--border-color); }
+        th {
+            background:#202020; color:var(--text-secondary); font-size:11px;
+            letter-spacing:.06em; text-transform:uppercase;
+        }
+        td { color:#d1d5db; font-size:13px; }
+        tbody tr { background:rgba(255,255,255,.008); transition:background .15s; }
+        tbody tr:hover { background:rgba(255,255,255,.025); }
+        tbody tr:last-child td { border-bottom:0; }
+        .device-name { color:#f3f4f6; font-weight:650; }
+        .created-at { color:var(--text-secondary); font-variant-numeric:tabular-nums; }
+        .action-cell { width:1%; white-space:nowrap; }
+        @media (max-width: 680px) {
+            .shell { width:min(100% - 24px, 1040px); padding-top:24px; }
+            .page-header { flex-direction:column; }
+            .header-actions { width:100%; justify-content:flex-start; }
+            .panel { padding:18px; }
+            .form-row { grid-template-columns:1fr; }
+            .form-row .button { width:100%; }
+        }
+    </style>
+</head>
+<body class="dark">
+<main class="shell">
+    <header class="page-header">
+        <div>
+            <p class="eyebrow">SimpleLabel · Access Control</p>
+            <h1>管理员令牌管理</h1>
+            <p class="page-description">集中管理具有管理员权限的设备。令牌只在创建时显示一次，服务端仅保存不可逆哈希。</p>
+            <span class="device-badge">当前设备：<strong th:text="${currentDevice}"></strong></span>
+        </div>
+        <nav class="header-actions" aria-label="页面操作">
+            <a class="button" href="/annotation">返回数据标注</a>
+            <form method="post" action="/admin/deactivate">
+                <button class="button" type="submit">退出管理员</button>
+            </form>
+        </nav>
+    </header>
+    <section class="panel">
+        <div class="panel-heading">
+            <div>
+                <h2>添加管理员设备</h2>
+                <p>设备名仅支持字母、数字、点、下划线和连字符。</p>
+            </div>
+        </div>
+        <form id="create-form" class="form-row">
+            <div class="field">
+                <label for="device-name">设备名称</label>
+                <input id="device-name" name="name" required maxlength="64" pattern="[A-Za-z0-9._-]{1,64}"
+                       autocomplete="off" spellcheck="false" placeholder="例如 admin-pc-3">
+            </div>
+            <button id="create-button" class="button button-primary" type="submit">生成新令牌</button>
+        </form>
+        <p id="create-error" class="error" role="alert"></p>
+        <div id="token-result" class="token-result" role="status" aria-live="polite">
+            <strong class="token-result-title">令牌已生成</strong>
+            <p>请立即复制并安全保存，关闭或刷新页面后无法再次查看。</p>
+            <code id="token-value" class="token-value"></code>
+            <div class="token-actions">
+                <button id="copy-token" class="button button-primary" type="button">复制令牌</button>
+                <button class="button" type="button" onclick="location.reload()">完成并刷新</button>
+            </div>
+        </div>
+    </section>
+    <section class="panel">
+        <div class="panel-heading">
+            <div>
+                <h2>已授权设备</h2>
+                <p>撤销后，目标设备的管理员权限将在下一次请求时立即失效。</p>
+            </div>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>设备名</th><th>创建时间</th><th>操作</th></tr></thead>
+                <tbody>
+                <tr th:each="device : ${devices}">
+                    <td><span class="device-name" th:text="${device.name}"></span><span class="current" th:if="${device.current}">当前设备</span></td>
+                    <td class="created-at" th:text="${device.created_at}"></td>
+                    <td class="action-cell"><button class="button button-danger" type="button" th:disabled="${device.current}"
+                                th:attr="data-name=${device.name}" onclick="deleteDevice(this.dataset.name)">撤销权限</button></td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
+</main>
+<script th:inline="javascript">
+    const CSRF_TOKEN = /*[[${csrfToken}]]*/ '';
+    document.getElementById('create-form').addEventListener('submit', async event => {
+        event.preventDefault();
+        const error = document.getElementById('create-error');
+        error.textContent = '';
+        const button = document.getElementById('create-button');
+        button.disabled = true;
+        button.textContent = '正在生成…';
+        try {
+            const response = await fetch('/api/admin/tokens', {
+                method:'POST', headers:{'Content-Type':'application/json','X-SimpleLabel-CSRF':CSRF_TOKEN},
+                body:JSON.stringify({name:document.getElementById('device-name').value.trim()})
+            });
+            const data = await response.json();
+            if (!response.ok) { throw new Error(data.error || '创建失败'); }
+            document.getElementById('token-value').textContent = data.token;
+            document.getElementById('token-result').style.display = 'block';
+            button.textContent = '令牌已生成';
+        } catch (requestError) {
+            error.textContent = requestError.message || '创建失败';
+            button.disabled = false;
+            button.textContent = '生成新令牌';
+        }
+    });
+    document.getElementById('copy-token').addEventListener('click', async event => {
+        const button = event.currentTarget;
+        try {
+            await navigator.clipboard.writeText(document.getElementById('token-value').textContent);
+            button.textContent = '已复制';
+        } catch (copyError) {
+            button.textContent = '复制失败，请手动选择';
+        }
+    });
+    async function deleteDevice(name) {
+        if (!confirm(`确认撤销设备 ${name}？`)) return;
+        const response = await fetch('/api/admin/tokens/' + encodeURIComponent(name), {
+            method:'DELETE', headers:{'X-SimpleLabel-CSRF':CSRF_TOKEN}
+        });
+        if (response.ok) { location.reload(); return; }
+        const data = await response.json(); alert(data.error || '撤销失败');
+    }
+</script>
+</body>
+</html>

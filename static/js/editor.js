@@ -326,7 +326,7 @@ async function loadAnnotation(filename, loadId) {
     const jsonName = filename.substring(0, filename.lastIndexOf('.')) + '.json';
     
     try {
-        const res = await fetch('/data/' + PROJECT_KEY + '/' + jsonName);
+        const res = await fetch('/api/annotations/' + PROJECT_KEY + '/' + encodeURIComponent(filename));
         if (loadId !== currentLoadId) return; // Check again after await
         
         if (res.ok) {
@@ -661,6 +661,11 @@ function updateDeleteButton() {
         moveBtn.textContent = count > 0 ? '📁 Move (' + count + ')' : '📁 Move';
         moveBtn.style.opacity = count > 0 ? '1' : '0.5';
     }
+    const restoreBtn = document.getElementById('restore-files-btn');
+    if (restoreBtn) {
+        restoreBtn.textContent = count > 0 ? '↩ Restore (' + count + ')' : '↩ Restore';
+        restoreBtn.style.opacity = count > 0 ? '1' : '0.5';
+    }
     const pasteBtn = document.getElementById('paste-files-btn');
     if (pasteBtn) {
         pasteBtn.textContent = count > 0 ? '📋 Paste (' + count + ')' : '📋 Paste';
@@ -794,8 +799,8 @@ async function deleteSelectedFiles() {
 let fileTransferMode = 'move';
 
 function openMoveFilesModal() {
-    if (MAIN_FOLDER !== 'annotation flies') {
-        alert('Move is only available in annotation flies.');
+    if (WORKFLOW_STATE !== 'annotating' && WORKFLOW_STATE !== 'review') {
+        alert('Move 仅可在“标注中”和“待检查”阶段使用。');
         return;
     }
     if (selectedFiles.size === 0) {
@@ -833,7 +838,7 @@ function openRestoreFilesModal() {
     fileTransferMode = 'restore';
     modal.querySelector('.modal-header').textContent = 'Restore Selected Files';
     document.getElementById('move-file-count').textContent = selectedFiles.size;
-    document.getElementById('move-selected-display').textContent = '→ annotation flies / ' + SUBFOLDER;
+    document.getElementById('move-selected-display').textContent = '→ 原任务阶段（标注中 / 待检查）/ ' + SUBFOLDER;
     const resultDiv = document.getElementById('move-result');
     resultDiv.style.display = 'none';
     resultDiv.textContent = '';
@@ -1666,6 +1671,7 @@ function updateModeUI() {
 }
 
 async function saveCurrent() {
+    if (READ_ONLY) return;
     const imgObj = images[currentImageIndex];
     const filename = imgObj.name;
     
@@ -1697,6 +1703,10 @@ async function saveCurrent() {
     
     const result = await res.json();
     if(result.status === 'success') {
+        if (result.state_changed && result.redirect_url) {
+            location.replace(result.redirect_url);
+            return;
+        }
         imgObj.processed = true; // Mark as processed
         // We do NOT call renderFileList() here to avoid resetting scroll or zoom
         // Just update the green dot for the current index
@@ -1715,6 +1725,10 @@ async function createEmptyJsons() {
     const res = await fetch('/api/create_empty_jsons/' + PROJECT_KEY, { method: 'POST' });
     const data = await res.json();
     if (data.status === 'success') {
+        if (data.state_changed && data.redirect_url) {
+            location.replace(data.redirect_url);
+            return;
+        }
         alert(`Created: ${data.created}\nAlready had JSON: ${data.skipped}\nErrors: ${data.errors}`);
         // Refresh the image list to show updated checkmarks
         init();

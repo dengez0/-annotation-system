@@ -7,7 +7,10 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
@@ -17,6 +20,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class WorkLogReadServiceTest {
     private static final DateTimeFormatter FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    private static final ZoneId SHANGHAI = ZoneId.of("Asia/Shanghai");
 
     @TempDir
     Path root;
@@ -87,11 +91,24 @@ class WorkLogReadServiceTest {
                 .hasMessageContaining("last 7 days");
     }
 
+    @Test
+    void writesConfiguredBusinessTimeWhenInstantIsUtc() throws Exception {
+        Files.createDirectories(root.resolve("logs"));
+        Clock clock = Clock.fixed(Instant.parse("2026-08-17T07:45:32Z"), SHANGHAI);
+        WorkLogService logs = new WorkLogService(new AppPaths(root.toString()), clock);
+
+        logs.write("SAVE_ANNOTATION", "192.168.1.10", "main", "sub", "one.jpg", null, 1, null);
+
+        assertThat(Files.readString(root.resolve("logs/ip_work.log")))
+                .startsWith("2026-08-17 15:45:32 | ");
+    }
+
     private WorkLogReadService reader() throws Exception {
         Files.createDirectories(root.resolve("data"));
         Files.createDirectories(root.resolve("models"));
         Files.createDirectories(root.resolve("logs"));
-        return new WorkLogReadService(new WorkLogService(new AppPaths(root.toString())));
+        Clock clock = Clock.system(SHANGHAI);
+        return new WorkLogReadService(new WorkLogService(new AppPaths(root.toString()), clock), clock);
     }
 
     private void writeLines(String... lines) throws Exception {
@@ -99,12 +116,12 @@ class WorkLogReadServiceTest {
     }
 
     private static String line(LocalDateTime time, String ip, String target, int boxes) {
-        return time.format(FORMAT) + " | " + ip + " | SAVE_ANNOTATION | annotation flies/shift | "
+        return time.format(FORMAT) + " | " + ip + " | SAVE_ANNOTATION | annotation files/shift | "
                 + target + " | boxes=" + boxes + " | success";
     }
 
     private static String moveLine(LocalDateTime time, String ip, String action, int count) {
-        return time.format(FORMAT) + " | " + ip + " | " + action + " | annotation flies/shift | files | count="
+        return time.format(FORMAT) + " | " + ip + " | " + action + " | annotation files/shift | files | count="
                 + count + " | success";
     }
 }

@@ -9,6 +9,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Clock;
+import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -16,10 +18,12 @@ import java.util.Map;
 public class HealthController {
     private final AppPaths paths;
     private final YoloWorkerClient worker;
+    private final Clock clock;
 
-    public HealthController(AppPaths paths, YoloWorkerClient worker) {
+    public HealthController(AppPaths paths, YoloWorkerClient worker, Clock clock) {
         this.paths = paths;
         this.worker = worker;
+        this.clock = clock;
     }
 
     @GetMapping("/internal/health")
@@ -37,6 +41,8 @@ public class HealthController {
         response.put("service", "simplelabel-java");
         response.put("version", getClass().getPackage().getImplementationVersion() == null
                 ? "development" : getClass().getPackage().getImplementationVersion());
+        response.put("time_zone", clock.getZone().getId());
+        response.put("current_time", OffsetDateTime.now(clock).toString());
         response.put("checks", checks);
         return ResponseEntity.status(healthy ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE).body(response);
     }

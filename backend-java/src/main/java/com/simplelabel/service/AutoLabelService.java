@@ -44,11 +44,11 @@ public class AutoLabelService {
         if (!Files.isDirectory(project)) throw new ApiException(HttpStatus.NOT_FOUND, "Project path not found");
         if (confidence < 0 || confidence > 1) throw new IllegalArgumentException("Confidence must be between 0 and 1");
         String taskId = tasks.create(backend);
-        tasks.submit(() -> run(taskId, project, modelName, confidence, backend, customRepo));
+        tasks.submit(() -> run(taskId, main, sub, project, modelName, confidence, backend, customRepo));
         return taskId;
     }
 
-    private void run(String taskId, Path project, String modelName, double confidence,
+    private void run(String taskId, String main, String sub, Path project, String modelName, double confidence,
                      String backend, String customRepo) {
         TaskService.TaskState task = tasks.state(taskId);
         if (task == null) return;
@@ -77,7 +77,7 @@ public class AutoLabelService {
                     payload.put("version", "5.2.1"); payload.set("flags", mapper.createObjectNode());
                     payload.set("shapes", shapes); payload.put("imagePath", image.getFileName().toString());
                     payload.putNull("imageData"); payload.put("imageHeight", height); payload.put("imageWidth", width);
-                    AnnotationService.atomicWrite(project.resolve(AnnotationService.stem(image.getFileName().toString()) + ".json"),
+                    AnnotationService.atomicWrite(annotations.annotationPath(main, sub, image.getFileName().toString()),
                             mapper.writerWithDefaultPrettyPrinter().writeValueAsBytes(payload));
                     saved++;
                 }

@@ -1,9 +1,12 @@
 package com.simplelabel.controller;
 
 import com.simplelabel.config.ApiException;
+import com.simplelabel.service.AdminAccessService;
 import com.simplelabel.service.AnnotationService;
 import com.simplelabel.service.FileService;
 import com.simplelabel.service.WorkLogService;
+import com.simplelabel.service.ProjectAccessService;
+import com.simplelabel.service.WorkflowService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
@@ -24,22 +27,35 @@ public class FileController {
     private final FileService files;
     private final AnnotationService annotations;
     private final WorkLogService workLog;
+    private final AdminAccessService admin;
+    private final ProjectAccessService access;
+    private final WorkflowService workflow;
 
-    public FileController(FileService files, AnnotationService annotations, WorkLogService workLog) {
-        this.files = files; this.annotations = annotations; this.workLog = workLog;
+    public FileController(FileService files, AnnotationService annotations, WorkLogService workLog,
+                          AdminAccessService admin, ProjectAccessService access, WorkflowService workflow) {
+        this.files = files; this.annotations = annotations; this.workLog = workLog; this.admin = admin;
+        this.access = access;
+        this.workflow = workflow;
     }
 
-    @PostMapping(path = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    Map<String, Object> upload(@RequestParam("files[]") List<MultipartFile> uploads,
-                               @RequestParam(defaultValue = "New_Project") String main_folder,
-                               @RequestParam(defaultValue = "default") String subfolder,
-                               @RequestParam(defaultValue = "[]") String file_paths,
-                               @RequestParam(defaultValue = "") String upload_manifest,
-                               HttpServletRequest request) throws IOException {
-        Map<String, Object> result = files.upload(uploads, main_folder, subfolder, file_paths, upload_manifest);
-        workLog.write("UPLOAD", request.getRemoteAddr(), String.valueOf(result.get("main_folder")),
-                String.valueOf(result.get("subfolder")), "files", ((Number) result.get("count")).intValue(), null, null);
+    @PostMapping(path = "/api/annotation-upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    Map<String, Object> uploadAnnotation(@RequestParam("files[]") List<MultipartFile> uploads,
+                                         @RequestParam String task_name,
+                                         @RequestParam String upload_id,
+                                         @RequestParam(defaultValue = "[]") String file_paths,
+                                         @RequestParam(defaultValue = "false") boolean complete,
+                                         HttpServletRequest request) throws IOException {
+        Map<String, Object> result = files.uploadAnnotation(uploads, task_name, upload_id, file_paths, complete);
+        workLog.write(complete ? "UPLOAD_TASK" : "UPLOAD_CHUNK", request.getRemoteAddr(),
+                String.valueOf(result.get("main_folder")), task_name, "files",
+                ((Number) result.get("count")).intValue(), null, null);
         return result;
+    }
+
+    @DeleteMapping("/api/annotation-upload/{uploadId}")
+    Map<String, Object> cancelAnnotationUpload(@PathVariable String uploadId) throws IOException {
+        files.cancelAnnotationUpload(uploadId);
+        return Map.of("status", "success");
     }
 
     @PostMapping("/api/rename_project")
@@ -47,6 +63,7 @@ public class FileController {
         String main = string(body, "main_folder"), oldName = string(body, "old_name");
         String newName = string(body, "new_name"), level = defaultString(body, "level", "main");
         if (oldName == null || newName == null) throw new ApiException(HttpStatus.BAD_REQUEST, "Missing parameters");
+        if ("sub".equals(level)) access.requireModify(main, request);
         Map<String, Object> result = files.rename(oldName, newName, level, main);
         workLog.write("RENAME_PROJECT", request.getRemoteAddr(), "sub".equals(level) ? main : oldName,
                 "sub".equals(level) ? oldName : null, oldName + " -> " + newName, null, null, null);
@@ -58,6 +75,7 @@ public class FileController {
         String main = string(body, "main_folder"), sub = string(body, "subfolder");
         String level = defaultString(body, "level", "main");
         if (main == null || ("sub".equals(level) && sub == null)) throw new ApiException(HttpStatus.BAD_REQUEST, "Missing parameters");
+        access.requireModify(main, request);
         Map<String, Object> result = files.deleteProject(main, sub, level);
         workLog.write("DELETE_PROJECT", request.getRemoteAddr(), main, sub, level, null, null, null);
         return result;
@@ -67,15 +85,16 @@ public class FileController {
     Map<String, Object> deleteFiles(@PathVariable String main, @PathVariable String sub,
                                     @RequestBody Map<String, Object> body, HttpServletRequest request) throws IOException {
         List<String> names = strings(body, "filenames"); requireFiles(names);
+        access.requireModify(main, request);
         Map<String, Object> result = files.deleteFiles(main, sub, names);
         workLog.write("DELETE_FILES", request.getRemoteAddr(), main, sub, "files", number(result, "deleted"), null, null);
         return result;
     }
 
-    @PostMapping("/api/move_files/{main}/{sub}")
     Map<String, Object> moveFiles(@PathVariable String main, @PathVariable String sub,
                                   @RequestBody Map<String, Object> body, HttpServletRequest request) throws IOException {
         List<String> names = strings(body, "filenames"); requireFiles(names);
+        access.requireModify(main, request);
         String destFolder = defaultString(body, "dest_folder", "");
         String destMain = defaultString(body, "dest_main_folder", "");
         String destSub = defaultString(body, "dest_subfolder", "");
@@ -89,6 +108,7 @@ public class FileController {
     Map<String, Object> moveCompleted(@PathVariable String main, @PathVariable String sub,
                                       @RequestBody Map<String, Object> body, HttpServletRequest request) throws IOException {
         List<String> names = strings(body, "filenames"); requireFiles(names);
+        access.requireModify(main, request);
         Map<String, Object> result = files.moveToCompleted(main, sub, names);
         workLog.write("MOVE_FILES", request.getRemoteAddr(), main, sub, "files", number(result, "moved"), null,
                 String.valueOf(result.get("destination")));
@@ -109,6 +129,7 @@ public class FileController {
     Map<String, Object> copy(@PathVariable String main, @PathVariable String sub,
                              @RequestBody Map<String, Object> body, HttpServletRequest request) throws IOException {
         List<String> names = strings(body, "filenames"); requireFiles(names);
+        access.requireModify(main, request);
         Map<String, Object> result = files.copyToPaste(main, sub, names);
         workLog.write("COPY_FILES", request.getRemoteAddr(), main, sub, "files", number(result, "copied"), null, "paste image");
         return result;
@@ -117,15 +138,20 @@ public class FileController {
     @PostMapping("/api/create_empty_jsons/{main}/{sub}")
     Map<String, Object> createEmpty(@PathVariable String main, @PathVariable String sub,
                                     HttpServletRequest request) throws IOException {
-        Map<String, Object> result = annotations.createEmptyJsons(main, sub);
+        access.requireModify(main, request);
+        WorkflowService.SaveResult started = workflow.saveWithAutomaticStart(main, sub, ignored -> { });
+        Map<String, Object> result = annotations.createEmptyJsons(started.main(), sub);
         if (result == null) throw new ApiException(HttpStatus.NOT_FOUND, "Project not found");
-        workLog.write("CREATE_EMPTY_JSONS", request.getRemoteAddr(), main, sub, "images", number(result, "created"), null, null);
+        result.put("state_changed", started.stateChanged());
+        result.put("redirect_url", "/annotate/" + started.main() + "/" + sub);
+        workLog.write("CREATE_EMPTY_JSONS", request.getRemoteAddr(), started.main(), sub, "images", number(result, "created"), null, null);
         return result;
     }
 
     @PostMapping("/api/export_yolo/{main}/{sub}")
     Map<String, Object> exportYolo(@PathVariable String main, @PathVariable String sub,
                                    @RequestBody Map<String, Object> body, HttpServletRequest request) throws IOException {
+        requireAdmin(request);
         Object rawLabels = body.get("labels");
         if (!(rawLabels instanceof List<?> values) || values.stream().anyMatch(value -> !(value instanceof String))) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "Labels must be an array of strings");
@@ -140,6 +166,7 @@ public class FileController {
     @GetMapping("/api/export/{main}/{sub}")
     ResponseEntity<StreamingResponseBody> exportZip(@PathVariable String main, @PathVariable String sub,
                                                      HttpServletRequest request) {
+        requireAdmin(request);
         if (!java.nio.file.Files.isDirectory(annotations.projectPath(main, sub))) {
             throw new ApiException(HttpStatus.NOT_FOUND, "Project not found");
         }
@@ -158,5 +185,11 @@ public class FileController {
         Object value = body.get(key);
         if (!(value instanceof List<?> list)) return List.of();
         return list.stream().filter(String.class::isInstance).map(String.class::cast).toList();
+    }
+
+    private void requireAdmin(HttpServletRequest request) {
+        if (!admin.isAllowed(request)) {
+            throw new ApiException(HttpStatus.FORBIDDEN, "Administrator access required");
+        }
     }
 }

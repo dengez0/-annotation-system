@@ -15,6 +15,7 @@ public class AppPaths {
     private final Path data;
     private final Path models;
     private final Path logs;
+    private final Path admin;
     private final Path processed;
     private final Path staticResources;
 
@@ -23,18 +24,20 @@ public class AppPaths {
                     @Value("${simplelabel.data-dir}") String data,
                     @Value("${simplelabel.models-dir}") String models,
                     @Value("${simplelabel.logs-dir}") String logs,
+                    @Value("${simplelabel.admin-dir}") String admin,
                     @Value("${simplelabel.processed-dir}") String processed,
                     @Value("${simplelabel.static-dir}") String staticResources) {
         this.root = Path.of(root).toAbsolutePath().normalize();
         this.data = configuredPath(data);
         this.models = configuredPath(models);
         this.logs = configuredPath(logs);
+        this.admin = configuredPath(admin);
         this.processed = configuredPath(processed);
         this.staticResources = configuredPath(staticResources);
     }
 
     public AppPaths(String root) {
-        this(root, "data", "models", "logs", "processed", "static");
+        this(root, "data", "models", "logs", "admin", "processed", "static");
     }
 
     @PostConstruct
@@ -42,6 +45,7 @@ public class AppPaths {
         Files.createDirectories(data);
         Files.createDirectories(models);
         Files.createDirectories(logs);
+        Files.createDirectories(admin);
         Files.createDirectories(processed);
     }
 
@@ -49,6 +53,7 @@ public class AppPaths {
     public Path data() { return data; }
     public Path models() { return models; }
     public Path logs() { return logs; }
+    public Path admin() { return admin; }
     public Path processed() { return processed; }
     public Path staticResources() { return staticResources; }
 

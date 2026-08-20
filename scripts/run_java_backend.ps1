@@ -58,11 +58,18 @@ if (Test-Path -LiteralPath $venvPython -PathType Leaf) {
 }
 
 $logs = Join-Path $root 'logs'
-New-Item -ItemType Directory -Force -Path $logs | Out-Null
+$admin = Join-Path $root 'admin'
+$processed = Join-Path $root 'processed'
+New-Item -ItemType Directory -Force -Path $logs, $admin, $processed | Out-Null
 $env:SIMPLELABEL_ROOT = $root
 $env:SIMPLELABEL_PORT = [string]$port
 $env:SIMPLELABEL_DATA_DIR = Join-Path $root 'data'
 $env:SIMPLELABEL_MODELS_DIR = Join-Path $root 'models'
+$env:SIMPLELABEL_LOGS_DIR = $logs
+$env:SIMPLELABEL_ADMIN_DIR = $admin
+$env:SIMPLELABEL_PROCESSED_DIR = $processed
+$env:SIMPLELABEL_STATIC_DIR = Join-Path $root 'static'
+$env:SIMPLELABEL_TIME_ZONE = 'Asia/Shanghai'
 $env:SIMPLELABEL_YOLO_WORKER_PORT = [string]$workerPort
 $env:SIMPLELABEL_YOLO_WORKER_URL = "http://127.0.0.1:$workerPort"
 $env:SIMPLELABEL_YOLO_WORKER_TOKEN = 'local-simplelabel-worker'

@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="zh" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>数据处理</title>
+    <link rel="stylesheet" href="/static/css/style.css?v=8">
+    <style>
+        * { box-sizing: border-box; }
+        body { margin: 0; min-width: 980px; }
+        .dp-shell { width: min(1440px, calc(100% - 40px)); margin: 0 auto; padding: 22px 0 48px; }
+        .dp-topbar { display:flex; align-items:center; justify-content:space-between; margin-bottom:18px; }
+        .dp-title { margin:0; font-size:24px; letter-spacing:1px; }
+        .dp-actions { display:flex; gap:8px; }
+        .dp-panel { background:var(--bg-panel); border:1px solid var(--border-color); border-radius:10px; }
+        .empty-workspace { min-height:520px; display:flex; align-items:center; justify-content:center; text-align:center; }
+        .empty-icon { font-size:52px; opacity:.7; }
+        .empty-workspace h2 { margin:18px 0 8px; font-size:20px; }
+        .empty-workspace p { margin:0 0 22px; color:var(--text-secondary); }
+        .primary-btn,.secondary-btn,.danger-btn { border:0; border-radius:5px; padding:9px 16px; cursor:pointer; font-weight:600; }
+        .primary-btn { background:var(--accent-blue); color:#fff; }
+        .secondary-btn { background:var(--bg-hover); color:var(--text-primary); border:1px solid var(--border-color); }
+        .danger-btn { background:var(--accent-red); color:#fff; }
+        button:disabled { opacity:.45; cursor:not-allowed; }
+        .workspace { display:none; }
+        .source-bar { padding:16px 18px; display:flex; align-items:center; gap:16px; margin-bottom:14px; }
+        .source-main { flex:1; min-width:0; }
+        .source-name { font-size:17px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .source-meta { margin-top:5px; color:var(--text-secondary); font-size:12px; display:flex; gap:14px; flex-wrap:wrap; }
+        .source-actions { display:none; align-items:center; gap:8px; }
+        .workspace-grid { display:grid; grid-template-columns:minmax(0, 1fr) 340px; gap:14px; align-items:start; }
+        .tools-panel { padding:18px; }
+        .section-heading { margin:0 0 5px; font-size:16px; }
+        .section-hint { margin:0 0 15px; color:var(--text-secondary); font-size:12px; }
+        .tool-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+        .tool-card { position:relative; border:1px solid var(--border-color); border-radius:8px; padding:14px; cursor:pointer; background:var(--bg-secondary); min-height:106px; transition:.15s; }
+        .tool-card:hover { border-color:var(--accent-blue); transform:translateY(-1px); }
+        .tool-card.selected { border-color:var(--accent-blue); background:rgba(68,136,255,.10); }
+        .tool-order { position:absolute; right:10px; top:10px; width:24px; height:24px; border-radius:50%; display:none; align-items:center; justify-content:center; background:var(--accent-blue); color:#fff; font-size:12px; font-weight:700; }
+        .tool-card.selected .tool-order { display:flex; }
+        .tool-name { font-size:15px; font-weight:700; margin-bottom:6px; }
+        .tool-description { color:var(--text-secondary); font-size:12px; line-height:1.55; padding-right:20px; }
+        .configuration { margin-top:14px; }
+        .config-card { display:none; border:1px solid var(--border-color); border-radius:8px; margin-top:9px; overflow:hidden; }
+        .config-card.active { display:block; }
+        .config-header { padding:11px 13px; font-weight:700; background:var(--bg-secondary); border-bottom:1px solid var(--border-color); }
+        .config-body { padding:13px; }
+        .form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+        .field label { display:block; color:var(--text-secondary); font-size:12px; margin-bottom:5px; }
+        .field input,.field select { width:100%; padding:8px 9px; color:var(--text-primary); background:var(--input-bg); border:1px solid var(--border-color); border-radius:4px; }
+        .rule-row { display:grid; grid-template-columns:1fr 1fr auto auto; gap:7px; align-items:center; margin-bottom:7px; }
+        .rule-row input { min-width:0; padding:8px; color:var(--text-primary); background:var(--input-bg); border:1px solid var(--border-color); border-radius:4px; }
+        .rule-delete-check { display:flex; align-items:center; gap:4px; color:var(--text-secondary); font-size:12px; white-space:nowrap; }
+        .icon-btn { padding:6px 9px; border:1px solid var(--border-color); background:transparent; color:var(--text-primary); border-radius:4px; cursor:pointer; }
+        .side-panel { padding:16px; position:sticky; top:14px; }
+        .pipeline-list { min-height:88px; border:1px dashed var(--border-color); border-radius:7px; padding:8px; }
+        .pipeline-empty { color:var(--text-dim); font-size:12px; text-align:center; padding:25px 4px; }
+        .pipeline-step { display:flex; align-items:center; gap:8px; padding:8px; border-radius:5px; background:var(--bg-secondary); margin-bottom:6px; font-size:13px; }
+        .pipeline-step:last-child { margin-bottom:0; }
+        .step-index { background:var(--accent-blue); color:#fff; width:21px; height:21px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:11px; }
+        .order-warning { color:#f0ad4e; font-size:11px; line-height:1.45; margin:9px 0 13px; }
+        .run-btn { width:100%; padding:11px; }
+        .task-box { display:none; margin-top:14px; padding-top:14px; border-top:1px solid var(--border-color); }
+        .task-box.active { display:block; }
+        .task-row { display:flex; justify-content:space-between; gap:8px; font-size:12px; margin-bottom:7px; }
+        progress { width:100%; height:9px; accent-color:var(--accent-blue); }
+        .task-message { margin-top:8px; font-size:12px; color:var(--text-secondary); line-height:1.45; word-break:break-word; }
+        .results-panel { margin-top:14px; padding:18px; }
+        .result-item { display:flex; align-items:center; gap:12px; padding:11px 0; border-top:1px solid var(--border-color); }
+        .result-item:first-of-type { border-top:0; }
+        .result-info { flex:1; min-width:0; }
+        .result-id { font-weight:600; font-size:13px; }
+        .result-meta { color:var(--text-secondary); font-size:11px; margin-top:3px; }
+        .result-actions { display:flex; gap:6px; }
+        .modal { display:none; position:fixed; z-index:1000; inset:0; background:rgba(0,0,0,.65); align-items:center; justify-content:center; }
+        .modal.open { display:flex; }
+        .modal-card { width:min(720px,calc(100% - 40px)); max-height:80vh; display:flex; flex-direction:column; background:var(--bg-panel); border:1px solid var(--border-color); border-radius:10px; overflow:hidden; }
+        .modal-head { padding:16px 18px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border-color); }
+        .modal-head h2 { margin:0; font-size:17px; }
+        .modal-body { padding:16px 18px; overflow:auto; }
+        .folder-search { width:100%; padding:10px; background:var(--input-bg); color:var(--text-primary); border:1px solid var(--border-color); border-radius:5px; margin-bottom:12px; }
+        .folder-main { margin-bottom:10px; border:1px solid var(--border-color); border-radius:7px; overflow:hidden; }
+        .folder-main-name { padding:10px 12px; font-weight:700; background:var(--bg-secondary); }
+        .folder-sub { display:flex; align-items:center; padding:10px 12px; border-top:1px solid var(--border-color); cursor:pointer; }
+        .folder-sub:hover { background:var(--bg-hover); }
+        .folder-sub-name { flex:1; }
+        .folder-sub-meta { color:var(--text-secondary); font-size:11px; }
+        .preview-list { margin:9px 0 0; padding:9px 11px; border-radius:5px; background:var(--bg-secondary); font:12px/1.5 monospace; color:var(--text-secondary); white-space:pre-wrap; }
+        @media(max-width:1100px){.workspace-grid{grid-template-columns:1fr}.side-panel{position:static}.tool-list{grid-template-columns:1fr}}
+    </style>
+</head>
+<body class="dark">
+<main class="dp-shell">
+    <header class="dp-topbar">
+        <h1 class="dp-title">数据处理</h1>
+        <div class="dp-actions">
+            <button class="secondary-btn" onclick="location.href='/'">Home</button>
+            <button class="secondary-btn" onclick="location.href='/annotation'">数据标注</button>
+        </div>
+    </header>
+
+    <section id="empty-workspace" class="dp-panel empty-workspace">
+        <div>
+            <div class="empty-icon">▧</div>
+            <h2>工作区为空</h2>
+            <p>从服务器已有数据中选择一个文件夹，然后配置独立或组合处理任务。</p>
+            <button class="primary-btn" onclick="openFolderPicker()">选择文件夹</button>
+        </div>
+    </section>
+
+    <section id="workspace" class="workspace">
+        <div class="dp-panel source-bar">
+            <div class="source-main">
+                <div id="source-name" class="source-name"></div>
+                <div id="source-meta" class="source-meta"></div>
+            </div>
+            <div id="source-actions" class="source-actions">
+                <button id="download-source-btn" class="secondary-btn" onclick="downloadSource()">下载源文件 ZIP</button>
+                <button id="delete-source-btn" class="danger-btn" onclick="deleteSource()">删除源文件夹</button>
+            </div>
+            <button class="secondary-btn" onclick="openFolderPicker()">更换文件夹</button>
+            <button class="secondary-btn" onclick="clearWorkspace()">清空工作区</button>
+        </div>
+
+        <div class="workspace-grid">
+            <section class="dp-panel tools-panel">
+                <h2 class="section-heading">处理工具</h2>
+                <p class="section-hint">点击工具加入任务；编号即组合任务的实际执行顺序。再次点击可移除。</p>
+                <div id="tool-list" class="tool-list"></div>
+                <div class="configuration">
+                    <div id="config-json_labels" class="config-card">
+                        <div class="config-header">JSON 标签修改规则</div>
+                        <div class="config-body">
+                            <div id="label-rules"></div>
+                            <button class="secondary-btn" type="button" onclick="addLabelRule()">＋ 添加规则</button>
+                        </div>
+                    </div>
+                    <div id="config-file_rename" class="config-card">
+                        <div class="config-header">文件重命名设置</div>
+                        <div class="config-body">
+                            <div class="form-grid">
+                                <div class="field"><label>模式</label><select id="rename-mode" onchange="renderRenameFields()"><option value="sequence">编号模板</option><option value="pattern">前后缀 / 查找替换</option></select></div>
+                                <div class="field"><label>前缀</label><input id="rename-prefix" value="image_"></div>
+                                <div class="field sequence-field"><label>起始编号</label><input id="rename-start" type="number" min="0" value="1"></div>
+                                <div class="field sequence-field"><label>补零位数</label><input id="rename-padding" type="number" min="1" max="12" value="6"></div>
+                                <div class="field pattern-field" style="display:none"><label>查找文本</label><input id="rename-find"></div>
+                                <div class="field pattern-field" style="display:none"><label>替换为</label><input id="rename-replace"></div>
+                                <div class="field"><label>后缀</label><input id="rename-suffix"></div>
+                            </div>
+                            <div id="rename-preview" class="preview-list">选择数据后显示重命名预览。</div>
+                        </div>
+                    </div>
+                    <div id="config-yolo_export" class="config-card">
+                        <div class="config-header">YOLO 标签顺序</div>
+                        <div class="config-body">
+                            <div class="field"><label>按 class ID 顺序填写，使用英文逗号分隔</label><input id="yolo-labels" placeholder="person,helmet,car"></div>
+                            <p class="section-hint" style="margin:8px 0 0">如果前序步骤修改了标签，请填写修改后的完整标签集合；mask 不参与导出。结果 ZIP 会同时保留图片、JSON、生成的 TXT 和 classes.txt。</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <aside class="dp-panel side-panel">
+                <h2 class="section-heading">任务流程</h2>
+                <p class="section-hint">支持单项运行，也支持多项组合。</p>
+                <div id="pipeline-list" class="pipeline-list"></div>
+                <div class="order-warning">组合任务严格按点击顺序执行。标签修改、mask 和 YOLO 的先后顺序可能改变最终结果。</div>
+                <button id="run-btn" class="primary-btn run-btn" onclick="startTask()" disabled>开始处理</button>
+                <div id="task-box" class="task-box">
+                    <div class="task-row"><span id="task-stage">准备中</span><span id="task-progress-text">0 / 0</span></div>
+                    <progress id="task-progress" value="0" max="1"></progress>
+                    <div id="task-message" class="task-message"></div>
+                    <button id="cancel-btn" class="danger-btn" style="margin-top:10px" onclick="cancelTask()">取消任务</button>
+                </div>
+            </aside>
+        </div>
+
+        <section class="dp-panel results-panel">
+            <h2 class="section-heading">处理结果</h2>
+            <p class="section-hint">结果保存在 runtime/processed；下载与删除仅已激活管理员令牌的设备可用。YOLO 转换结果下载为完整数据副本，包含图片、JSON 和 TXT。</p>
+            <div id="results-list"><div class="pipeline-empty">暂无处理结果</div></div>
+        </section>
+    </section>
+</main>
+
+<div id="folder-modal" class="modal" onclick="if(event.target===this)closeFolderPicker()">
+    <div class="modal-card">
+        <div class="modal-head"><h2>选择服务器文件夹</h2><button class="icon-btn" onclick="closeFolderPicker()">✕</button></div>
+        <div class="modal-body">
+            <input id="folder-search" class="folder-search" placeholder="搜索主目录或子目录" oninput="renderFolderTree()">
+            <div id="folder-tree"><div class="pipeline-empty">正在读取目录…</div></div>
+        </div>
+    </div>
+</div>
+
+<script th:inline="javascript">
+    const IS_ADMIN = /*[[${isAdmin}]]*/ false;
+    const TOOLS = [
+        {type:'image_repair', name:'图片修复', description:'容错读取、校正 EXIF 方向、统一 RGB 并重新编码。'},
+        {type:'mask_blackout', name:'mask 涂黑', description:'将 JSON 中 label=mask 的多边形或矩形区域涂黑，保留原 JSON。'},
+        {type:'json_labels', name:'JSON 标签修改', description:'支持标签改名、多个标签合并，以及删除指定标签。'},
+        {type:'file_rename', name:'文件重命名', description:'按编号模板或文本规则同步重命名图片与 JSON/TXT。'},
+        {type:'yolo_export', name:'YOLO 格式转换', description:'生成 TXT 和 classes.txt；下载结果时同时包含图片与原始 JSON。'}
+    ];
+    let projects = [];
+    let source = null;
+    let selectedOrder = [];
+    let currentTask = null;
+    let pollTimer = null;
+
+    function apiPath(value){ return encodeURIComponent(value); }
+    function formatBytes(value){
+        const units=['B','KB','MB','GB','TB']; let number=Number(value)||0, index=0;
+        while(number>=1024&&index<units.length-1){number/=1024;index++;}
+        return `${number.toFixed(index?1:0)} ${units[index]}`;
+    }
+    function escapeHtml(value){ const node=document.createElement('span');node.textContent=String(value);return node.innerHTML; }
+
+    function renderTools(){
+        document.getElementById('tool-list').innerHTML=TOOLS.map(tool=>{
+            const order=selectedOrder.indexOf(tool.type);
+            return `<article class="tool-card ${order>=0?'selected':''}" onclick="toggleTool('${tool.type}')">
+                <span class="tool-order">${order+1}</span><div class="tool-name">${tool.name}</div><div class="tool-description">${tool.description}</div></article>`;
+        }).join('');
+        document.querySelectorAll('.config-card').forEach(node=>node.classList.remove('active'));
+        selectedOrder.forEach(type=>document.getElementById('config-'+type)?.classList.add('active'));
+        const pipeline=document.getElementById('pipeline-list');
+        pipeline.innerHTML=selectedOrder.length?selectedOrder.map((type,index)=>{
+            const tool=TOOLS.find(item=>item.type===type);
+            return `<div class="pipeline-step"><span class="step-index">${index+1}</span><span>${tool.name}</span></div>`;
+        }).join(''):'<div class="pipeline-empty">尚未选择处理工具</div>';
+        document.getElementById('run-btn').disabled=!source||selectedOrder.length===0||!!currentTask;
+        updateSourceActions();
+    }
+
+    function updateSourceActions(){
+        const allowed=IS_ADMIN&&source?.main==='annotation files';
+        document.getElementById('source-actions').style.display=allowed?'flex':'none';
+        document.getElementById('download-source-btn').disabled=!!currentTask;
+        document.getElementById('delete-source-btn').disabled=!!currentTask;
+    }
+
+    function toggleTool(type){
+        if(currentTask)return;
+        const index=selectedOrder.indexOf(type);
+        if(index>=0)selectedOrder.splice(index,1);else selectedOrder.push(type);
+        if(type==='json_labels'&&selectedOrder.includes(type)&&!document.querySelector('.rule-row'))addLabelRule();
+        renderTools();
+    }
+
+    async function openFolderPicker(){
+        document.getElementById('folder-modal').classList.add('open');
+        if(!projects.length){
+            try{const response=await fetch('/api/data-processing/projects');if(!response.ok)throw new Error('目录读取失败');projects=await response.json();renderFolderTree();}
+            catch(error){document.getElementById('folder-tree').innerHTML=`<div class="pipeline-empty">${escapeHtml(error.message)}</div>`;}
+        }else renderFolderTree();
+    }
+    function closeFolderPicker(){document.getElementById('folder-modal').classList.remove('open');}
+    function renderFolderTree(){
+        const query=document.getElementById('folder-search').value.trim().toLowerCase();
+        const html=projects.map(main=>{
+            const subs=(main.subfolders||[]).filter(sub=>!query||main.name.toLowerCase().includes(query)||sub.name.toLowerCase().includes(query));
+            if(!subs.length)return '';
+            return `<div class="folder-main"><div class="folder-main-name">📁 ${escapeHtml(main.name)}</div>${subs.map(sub=>
+                `<div class="folder-sub" data-main="${encodeURIComponent(main.name)}" data-sub="${encodeURIComponent(sub.name)}" onclick="selectFolder(decodeURIComponent(this.dataset.main),decodeURIComponent(this.dataset.sub))"><span class="folder-sub-name">${escapeHtml(sub.name)}</span><span class="folder-sub-meta">已标注 ${sub.annotated_count} / ${sub.count} 张</span></div>`).join('')}</div>`;
+        }).join('');
+        document.getElementById('folder-tree').innerHTML=html||'<div class="pipeline-empty">没有匹配的文件夹</div>';
+    }
+
+    async function selectFolder(main,sub){
+        closeFolderPicker();
+        try{
+            const response=await fetch(`/api/data-processing/inspect/${apiPath(main)}/${apiPath(sub)}`);
+            const data=await response.json();if(!response.ok)throw new Error(data.error||'文件夹检查失败');
+            source=data;
+            document.getElementById('empty-workspace').style.display='none';
+            document.getElementById('workspace').style.display='block';
+            document.getElementById('source-name').textContent=`${main} / ${sub}`;
+            document.getElementById('source-meta').innerHTML=`<span>图片 ${data.images}</span><span>JSON ${data.json_files}</span><span>文件 ${data.files}</span><span>大小 ${formatBytes(data.bytes)}</span><span>预计空间 ${formatBytes(data.estimated_required_bytes)}</span>`;
+            document.getElementById('yolo-labels').value=(data.labels||[]).join(',');
+            selectedOrder=[];currentTask=null;renderTools();renderRenamePreview();loadResults();
+        }catch(error){alert(error.message);}
+    }
+    function clearWorkspace(){
+        if(currentTask)return alert('请先等待任务结束或取消任务');
+        source=null;selectedOrder=[];document.getElementById('workspace').style.display='none';document.getElementById('empty-workspace').style.display='flex';renderTools();
+    }
+
+    function downloadSource(){
+        if(!IS_ADMIN||!source||source.main!=='annotation files'||currentTask)return;
+        window.location.href=`/api/data-processing/source/${apiPath(source.main)}/${apiPath(source.sub)}/download`;
+    }
+
+    async function deleteSource(){
+        if(!IS_ADMIN||!source||source.main!=='annotation files'||currentTask)return;
+        const main=source.main,sub=source.sub,files=source.files||0;
+        const confirmation=prompt(`此操作会永久删除 ${main} / ${sub} 中的全部 ${files} 个文件，且不会删除已有处理结果。\n\n请输入子文件夹名称“${sub}”确认删除：`);
+        if(confirmation!==sub)return;
+        const response=await fetch(`/api/data-processing/source/${apiPath(main)}/${apiPath(sub)}`,{method:'DELETE'});
+        const data=await response.json();
+        if(!response.ok)return alert(data.error||'源文件夹删除失败');
+        projects=[];
+        clearWorkspace();
+        alert(`已删除 ${main} / ${sub}，共 ${data.deleted_files||0} 个文件。`);
+    }
+
+    function addLabelRule(from='',to='',remove=false){
+        const row=document.createElement('div');row.className='rule-row';
+        row.innerHTML=`<input class="rule-from" placeholder="原标签"><input class="rule-to" placeholder="新标签"><label class="rule-delete-check"><input type="checkbox" class="rule-delete">删除</label><button class="icon-btn" type="button">✕</button>`;
+        row.querySelector('.rule-from').value=from;row.querySelector('.rule-to').value=to;row.querySelector('.rule-delete').checked=remove;
+        row.querySelector('.rule-delete').onchange=event=>{row.querySelector('.rule-to').disabled=event.target.checked;};
+        row.querySelector('button').onclick=()=>row.remove();document.getElementById('label-rules').appendChild(row);
+    }
+    function collectRules(){
+        return [...document.querySelectorAll('.rule-row')].map(row=>({from:row.querySelector('.rule-from').value.trim(),to:row.querySelector('.rule-to').value.trim(),delete:row.querySelector('.rule-delete').checked}));
+    }
+    function renderRenameFields(){
+        const sequence=document.getElementById('rename-mode').value==='sequence';
+        document.querySelectorAll('.sequence-field').forEach(node=>node.style.display=sequence?'block':'none');
+        document.querySelectorAll('.pattern-field').forEach(node=>node.style.display=sequence?'none':'block');
+        if(sequence&&document.getElementById('rename-prefix').value==='')document.getElementById('rename-prefix').value='image_';
+        renderRenamePreview();
+    }
+    function renameConfig(){return {type:'file_rename',mode:document.getElementById('rename-mode').value,prefix:document.getElementById('rename-prefix').value,suffix:document.getElementById('rename-suffix').value,find:document.getElementById('rename-find').value,replace:document.getElementById('rename-replace').value,start:Number(document.getElementById('rename-start').value),padding:Number(document.getElementById('rename-padding').value)};}
+    function renderRenamePreview(){
+        if(!source)return;
+        const config=renameConfig(),samples=source.sample_images||[];
+        document.getElementById('rename-preview').textContent=samples.slice(0,5).map((name,index)=>{
+            const slash=name.lastIndexOf('/'),dir=slash>=0?name.slice(0,slash+1):'',file=slash>=0?name.slice(slash+1):name,dot=file.lastIndexOf('.'),stem=dot>=0?file.slice(0,dot):file,ext=dot>=0?file.slice(dot):'';
+            let next;if(config.mode==='sequence')next=config.prefix+String(config.start+index).padStart(config.padding,'0')+config.suffix+ext;
+            else next=config.prefix+(config.find?stem.split(config.find).join(config.replace):stem)+config.suffix+ext;
+            return `${name}  →  ${dir}${next}`;
+        }).join('\n')||'目录中没有图片。';
+    }
+    ['rename-prefix','rename-suffix','rename-find','rename-replace','rename-start','rename-padding'].forEach(id=>document.getElementById(id).addEventListener('input',renderRenamePreview));
+
+    function buildOperations(){
+        return selectedOrder.map(type=>{
+            if(type==='json_labels')return {type,rules:collectRules()};
+            if(type==='file_rename')return renameConfig();
+            if(type==='yolo_export')return {type,labels:document.getElementById('yolo-labels').value.split(',').map(item=>item.trim()).filter(Boolean)};
+            return {type};
+        });
+    }
+    async function startTask(){
+        if(!source||!selectedOrder.length)return;
+        const operations=buildOperations();
+        const names=operations.map(item=>TOOLS.find(tool=>tool.type===item.type).name).join(' → ');
+        if(!confirm(`确认开始处理？\n\n数据源：${source.main} / ${source.sub}\n执行顺序：${names}\n\n源数据不会被修改。`))return;
+        try{
+            const response=await fetch('/api/data-processing/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({main:source.main,sub:source.sub,operations})});
+            const data=await response.json();if(!response.ok)throw new Error(data.error||'任务启动失败');
+            currentTask=data.task_id;document.getElementById('task-box').classList.add('active');document.getElementById('cancel-btn').style.display='inline-block';document.getElementById('task-message').textContent='任务已提交，正在准备完整副本。';renderTools();pollTask();
+        }catch(error){alert(error.message);}
+    }
+    async function pollTask(){
+        if(!currentTask)return;
+        try{
+            const response=await fetch(`/api/task_status/${apiPath(currentTask)}`);const data=await response.json();if(!response.ok)throw new Error(data.error||'状态读取失败');
+            const progress=document.getElementById('task-progress');progress.max=Math.max(data.total||1,1);progress.value=data.progress||0;
+            document.getElementById('task-stage').textContent=`${data.stage||data.status} · ${TOOLS.find(tool=>tool.type===data.operation)?.name||data.operation||''}`;
+            document.getElementById('task-progress-text').textContent=`${data.progress||0} / ${data.total||0}`;
+            if(data.status==='completed'){
+                document.getElementById('task-message').textContent=`处理完成，结果编号：${data.result_id}`;finishTask();loadResults();return;
+            }
+            if(data.status==='failed'||data.status==='cancelled'){
+                document.getElementById('task-message').textContent=data.status==='failed'?`处理失败：${data.error||'未知错误'}`:'任务已取消，临时文件已清理。';finishTask();return;
+            }
+            pollTimer=setTimeout(pollTask,1000);
+        }catch(error){document.getElementById('task-message').textContent=error.message;pollTimer=setTimeout(pollTask,2500);}
+    }
+    function finishTask(){currentTask=null;document.getElementById('cancel-btn').style.display='none';renderTools();}
+    async function cancelTask(){if(!currentTask||!confirm('确认取消当前任务？'))return;await fetch(`/api/cancel_task/${apiPath(currentTask)}`,{method:'POST'});document.getElementById('task-message').textContent='正在取消并清理临时文件…';}
+
+    async function loadResults(){
+        if(!source)return;
+        try{
+            const response=await fetch(`/api/data-processing/results/${apiPath(source.main)}/${apiPath(source.sub)}`);const results=await response.json();if(!response.ok)throw new Error(results.error||'结果读取失败');
+            document.getElementById('results-list').innerHTML=results.length?results.map(item=>{
+                const counts=item.summary||{};
+                const hasYolo=(item.operations||[]).some(operation=>operation.type==='yolo_export');
+                const downloadLabel=hasYolo?'下载完整 ZIP（图片 + JSON + TXT）':'下载完整 ZIP';
+                const actions=IS_ADMIN?`<div class="result-actions"><button class="secondary-btn" onclick="downloadResult('${item.result_id}')">${downloadLabel}</button><button class="danger-btn" onclick="deleteResult('${item.result_id}')">删除</button></div>`:'';
+                return `<div class="result-item"><div class="result-info"><div class="result-id">${escapeHtml(item.result_id)}</div><div class="result-meta">${escapeHtml(item.completed_at||'')} · ${escapeHtml(JSON.stringify(counts))}</div></div>${actions}</div>`;
+            }).join(''):'<div class="pipeline-empty">暂无处理结果</div>';
+        }catch(error){document.getElementById('results-list').innerHTML=`<div class="pipeline-empty">${escapeHtml(error.message)}</div>`;}
+    }
+    function downloadResult(id){window.location.href=`/api/data-processing/results/${apiPath(source.main)}/${apiPath(source.sub)}/${apiPath(id)}/download`;}
+    async function deleteResult(id){
+        if(!confirm(`确认永久删除处理结果 ${id}？源数据不会受到影响。`))return;
+        const response=await fetch(`/api/data-processing/results/${apiPath(source.main)}/${apiPath(source.sub)}/${apiPath(id)}`,{method:'DELETE'});const data=await response.json();if(!response.ok)return alert(data.error||'删除失败');loadResults();
+    }
+    renderTools();
+</script>
+</body>
+</html>
