@@ -22,7 +22,9 @@ try {
         'deploy/docker/Dockerfile',
         'deploy/docker/entrypoint.sh',
         'deploy/docker/compose.yml',
+        'deploy/docker/compose.test.yml',
         'deploy/docker/.env.example',
+        'deploy/docker/.env.test.example',
         'deploy/docker/deploy.sh',
         'deploy/docker/generate_admin_device_tokens.py',
         'deploy/docker/configure_admin_token.py',
@@ -37,6 +39,7 @@ try {
         'services/yolo_result_parser.py',
         'static',
         'yolo-worker',
+        'model-detection-python',
         'yolov5'
     )
 
@@ -49,8 +52,12 @@ try {
     }
 
     $runtime = Join-Path $releaseRoot 'runtime'
-    foreach ($name in @('data', 'models', 'logs', 'admin', 'processed')) {
+    foreach ($name in @('data', 'models', 'logs', 'admin', 'processed', 'backups')) {
         New-Item -ItemType Directory -Force -Path (Join-Path $runtime $name) | Out-Null
+    }
+    $testRuntime = Join-Path $releaseRoot 'runtime-test'
+    foreach ($name in @('data', 'models', 'logs', 'admin', 'processed', 'backups')) {
+        New-Item -ItemType Directory -Force -Path (Join-Path $testRuntime $name) | Out-Null
     }
 
     $checksumLines = Get-ChildItem -LiteralPath $releaseRoot -Recurse -File | ForEach-Object {

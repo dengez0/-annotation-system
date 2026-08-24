@@ -35,6 +35,29 @@ Users on the same LAN open `http://192.168.1.226:18083`. If the connection is
 refused while local verification passes, an administrator must review the
 host/network firewall. Do not change the firewall without authorization.
 
+## Isolated remote test environment
+
+The test stack does not reuse production ports or runtime data: its application
+is available at `http://SERVER_IP:18084`, its original PT_ONNX page uses port
+`8001`, and all files are stored under `runtime-test/`. Production remains on
+`18083`, `8000`, and `runtime/`.
+
+```bash
+# First test deployment: creates deploy/docker/.env.test and runtime-test/
+bash deploy/docker/deploy.sh test
+python3 deploy/docker/configure_admin_token.py runtime-test/admin/admin_tokens.json test-admin-pc
+docker compose --env-file deploy/docker/.env.test -f deploy/docker/compose.test.yml up -d
+
+# Inspect or stop only the test stack
+docker compose --env-file deploy/docker/.env.test -f deploy/docker/compose.test.yml ps
+docker compose --env-file deploy/docker/.env.test -f deploy/docker/compose.test.yml logs --tail=200
+docker compose --env-file deploy/docker/.env.test -f deploy/docker/compose.test.yml down
+```
+
+Do not copy production `runtime/` into `runtime-test/`; upload only the data
+needed for testing. The test compose file uses a separate container named
+`simplelabel-test`, so its lifecycle does not affect the production container.
+
 ## Token-only administrator access
 
 Client IP addresses, loopback, and server-local addresses never grant
@@ -74,8 +97,8 @@ capture from stealing a bearer token. Put the application behind HTTPS and set
 security boundary.
 
 Place model files in `runtime/models/`. Annotation data is stored in
-`runtime/data/`; logs, administrator hashes, and processed output also remain
-under `runtime/`.
+`runtime/data/`; logs, administrator hashes, processed output, and optional
+pre-mask backups under `runtime/backups/` also remain under `runtime/`.
 
 ## Operations
 

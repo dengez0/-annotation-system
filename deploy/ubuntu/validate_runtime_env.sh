@@ -2,9 +2,9 @@
 set -euo pipefail
 
 required=(
-    SIMPLELABEL_DEPLOYMENT_MODE SIMPLELABEL_TIME_ZONE SIMPLELABEL_ROOT SIMPLELABEL_BIND_ADDRESS SIMPLELABEL_PORT
+    SIMPLELABEL_DEPLOYMENT_MODE SIMPLELABEL_TIME_ZONE SIMPLELABEL_ROOT SIMPLELABEL_BIND_ADDRESS SIMPLELABEL_PORT SIMPLELABEL_MODEL_DETECTION_PORT
     SIMPLELABEL_DATA_DIR SIMPLELABEL_MODELS_DIR SIMPLELABEL_LOGS_DIR SIMPLELABEL_ADMIN_DIR
-    SIMPLELABEL_PROCESSED_DIR SIMPLELABEL_STATIC_DIR SIMPLELABEL_CACHE_DIR
+    SIMPLELABEL_PROCESSED_DIR SIMPLELABEL_BACKUPS_DIR SIMPLELABEL_STATIC_DIR SIMPLELABEL_CACHE_DIR
     SIMPLELABEL_YOLO_WORKER_PORT SIMPLELABEL_YOLO_WORKER_URL
     SIMPLELABEL_YOLO_WORKER_TOKEN SIMPLELABEL_YOLO_DEVICE
 )
@@ -26,7 +26,7 @@ done
     echo "[ERROR] SIMPLELABEL_STATIC_DIR must stay inside /opt/simplelabel." >&2
     exit 1
 }
-for name in SIMPLELABEL_DATA_DIR SIMPLELABEL_MODELS_DIR SIMPLELABEL_LOGS_DIR SIMPLELABEL_ADMIN_DIR SIMPLELABEL_PROCESSED_DIR; do
+for name in SIMPLELABEL_DATA_DIR SIMPLELABEL_MODELS_DIR SIMPLELABEL_LOGS_DIR SIMPLELABEL_ADMIN_DIR SIMPLELABEL_PROCESSED_DIR SIMPLELABEL_BACKUPS_DIR; do
     [[ "${!name}" == /srv/simplelabel/* || "${!name}" == /srv/simplelabel-preview/* ]] || {
         echo "[ERROR] ${name} must stay inside a SimpleLabel directory under /srv." >&2
         exit 1
@@ -38,14 +38,16 @@ done
 }
 
 for name in SIMPLELABEL_ROOT SIMPLELABEL_DATA_DIR SIMPLELABEL_MODELS_DIR \
-            SIMPLELABEL_LOGS_DIR SIMPLELABEL_PROCESSED_DIR SIMPLELABEL_STATIC_DIR \
+            SIMPLELABEL_LOGS_DIR SIMPLELABEL_PROCESSED_DIR SIMPLELABEL_BACKUPS_DIR SIMPLELABEL_STATIC_DIR \
             SIMPLELABEL_ADMIN_DIR SIMPLELABEL_CACHE_DIR; do
     [[ "${!name}" == /* ]] || { echo "[ERROR] ${name} must be an absolute path." >&2; exit 1; }
 done
 
 [[ "${SIMPLELABEL_PORT}" =~ ^[0-9]+$ ]] || { echo "[ERROR] Invalid web port." >&2; exit 1; }
+[[ "${SIMPLELABEL_MODEL_DETECTION_PORT}" =~ ^[0-9]+$ ]] || { echo "[ERROR] Invalid model detection port." >&2; exit 1; }
 [[ "${SIMPLELABEL_YOLO_WORKER_PORT}" =~ ^[0-9]+$ ]] || { echo "[ERROR] Invalid Worker port." >&2; exit 1; }
 (( SIMPLELABEL_PORT >= 1 && SIMPLELABEL_PORT <= 65535 )) || { echo "[ERROR] Web port is out of range." >&2; exit 1; }
+(( SIMPLELABEL_MODEL_DETECTION_PORT >= 1 && SIMPLELABEL_MODEL_DETECTION_PORT <= 65535 )) || { echo "[ERROR] Model detection port is out of range." >&2; exit 1; }
 (( SIMPLELABEL_YOLO_WORKER_PORT >= 1 && SIMPLELABEL_YOLO_WORKER_PORT <= 65535 )) || { echo "[ERROR] Worker port is out of range." >&2; exit 1; }
 case "${SIMPLELABEL_DEPLOYMENT_MODE}" in
     preview)
@@ -66,8 +68,17 @@ case "${SIMPLELABEL_DEPLOYMENT_MODE}" in
         [[ "${SIMPLELABEL_DATA_DIR}" == /srv/simplelabel/* ]] || { echo "[ERROR] Production must use the production data directory." >&2; exit 1; }
         [[ "${SIMPLELABEL_ADMIN_DIR}" == /srv/simplelabel/* ]] || { echo "[ERROR] Production must use the production administrator registry." >&2; exit 1; }
         ;;
+    test)
+        [[ "${SIMPLELABEL_BIND_ADDRESS}" == "0.0.0.0" ]] || { echo "[ERROR] Test Web must bind to 0.0.0.0." >&2; exit 1; }
+        [[ "${SIMPLELABEL_PORT}" == "18083" && "${SIMPLELABEL_MODEL_DETECTION_PORT}" == "8001" && "${SIMPLELABEL_YOLO_WORKER_PORT}" == "18085" ]] || {
+            echo "[ERROR] Test ports must be 18083 (web), 8001 (model detection), and 18085 (worker)." >&2
+            exit 1
+        }
+        [[ "${SIMPLELABEL_DATA_DIR}" == /srv/simplelabel/* ]] || { echo "[ERROR] Test must use an isolated SimpleLabel data mount." >&2; exit 1; }
+        [[ "${SIMPLELABEL_ADMIN_DIR}" == /srv/simplelabel/* ]] || { echo "[ERROR] Test must use an isolated SimpleLabel administrator registry." >&2; exit 1; }
+        ;;
     *)
-        echo "[ERROR] Deployment mode must be preview or production." >&2
+        echo "[ERROR] Deployment mode must be preview, production, or test." >&2
         exit 1
         ;;
 esac

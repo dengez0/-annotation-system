@@ -4,17 +4,24 @@ set -euo pipefail
 APP_ROOT=/opt/simplelabel/current
 WORKER_PID=
 WEB_PID=
+MODEL_DETECTION_PID=
 
 stop_children() {
     [[ -z "${WEB_PID}" ]] || kill "${WEB_PID}" 2>/dev/null || true
     [[ -z "${WORKER_PID}" ]] || kill "${WORKER_PID}" 2>/dev/null || true
+    [[ -z "${MODEL_DETECTION_PID}" ]] || kill "${MODEL_DETECTION_PID}" 2>/dev/null || true
     [[ -z "${WEB_PID}" ]] || wait "${WEB_PID}" 2>/dev/null || true
     [[ -z "${WORKER_PID}" ]] || wait "${WORKER_PID}" 2>/dev/null || true
+    [[ -z "${MODEL_DETECTION_PID}" ]] || wait "${MODEL_DETECTION_PID}" 2>/dev/null || true
 }
 trap stop_children EXIT INT TERM
 
 bash "${APP_ROOT}/deploy/ubuntu/validate_runtime_env.sh"
 mkdir -p "${SIMPLELABEL_CACHE_DIR}"
+
+export SIMPLELABEL_MODEL_DETECTION_BIND=0.0.0.0
+python3 "${APP_ROOT}/model-detection-python/main.py" &
+MODEL_DETECTION_PID=$!
 
 python3 "${APP_ROOT}/yolo-worker/worker.py" &
 WORKER_PID=$!
@@ -29,7 +36,7 @@ java "-Duser.timezone=${SIMPLELABEL_TIME_ZONE:-Asia/Shanghai}" \
 WEB_PID=$!
 
 set +e
-wait -n "${WORKER_PID}" "${WEB_PID}"
+wait -n "${WORKER_PID}" "${WEB_PID}" "${MODEL_DETECTION_PID}"
 status=$?
 set -e
 echo "A SimpleLabel child process exited with status ${status}; stopping the container." >&2

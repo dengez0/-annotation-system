@@ -7,6 +7,7 @@ import com.simplelabel.service.AdminTokenStore;
 import com.simplelabel.service.WorkLogService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
@@ -84,6 +85,52 @@ public class AdminTokenController {
         return ResponseEntity.status(HttpStatus.CREATED).body(result);
     }
 
+    @GetMapping("/api/admin/tokens/{name}/secret")
+    @ResponseBody
+    ResponseEntity<Map<String, Object>> reveal(@PathVariable String name,
+                                               @RequestHeader(value = "X-SimpleLabel-CSRF", required = false) String csrf,
+                                               HttpServletRequest request) throws IOException {
+        String current = requireAdmin(request);
+        requireCsrf(request, csrf);
+        String token;
+        try {
+            token = tokens.reveal(name);
+        } catch (AdminTokenStore.UnknownDeviceException exception) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "Administrator device not found");
+        } catch (AdminTokenStore.TokenRevealUnavailableException exception) {
+            throw new ApiException(HttpStatus.CONFLICT, exception.getMessage());
+        }
+        workLog.write("ADMIN_TOKEN_REVEAL", request.getRemoteAddr(), null, null,
+                name, 1, null, "actor=" + current);
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(Map.of("name", name, "token", token));
+    }
+
+    @PostMapping("/api/admin/tokens/{name}/reissue")
+    @ResponseBody
+    ResponseEntity<Map<String, Object>> reissue(@PathVariable String name,
+                                                 @RequestHeader(value = "X-SimpleLabel-CSRF", required = false) String csrf,
+                                                 HttpServletRequest request,
+                                                 HttpServletResponse response) throws IOException {
+        String current = requireAdmin(request);
+        requireCsrf(request, csrf);
+        AdminTokenStore.CreatedToken issued;
+        try {
+            issued = tokens.reissue(name);
+        } catch (AdminTokenStore.UnknownDeviceException exception) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "Administrator device not found");
+        }
+        if (name.equals(current)) {
+            cookies.activate(issued.token(), request, response);
+        }
+        workLog.write("ADMIN_TOKEN_REISSUE", request.getRemoteAddr(), null, null,
+                name, 1, null, "actor=" + current);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("name", issued.name());
+        result.put("token", issued.token());
+        result.put("created_at", issued.createdAt());
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(result);
+    }
+
     @DeleteMapping("/api/admin/tokens/{name}")
     @ResponseBody
     ResponseEntity<Void> delete(@PathVariable String name,
@@ -106,7 +153,8 @@ public class AdminTokenController {
         return tokens.list().stream().map(device -> Map.<String, Object>of(
                 "name", device.name(),
                 "created_at", device.createdAt(),
-                "current", device.name().equals(current))).toList();
+                "current", device.name().equals(current),
+                "revealable", device.revealable())).toList();
     }
 
     private String requireAdmin(HttpServletRequest request) {

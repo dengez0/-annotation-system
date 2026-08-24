@@ -1,5 +1,7 @@
 Flask
 ultralytics
+onnx
+onnxruntime
 Pillow
 gunicorn
 waitress

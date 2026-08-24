@@ -9,6 +9,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Controller;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -21,12 +22,15 @@ public class PageController {
     private final AnnotationService annotations;
     private final AdminAccessService adminAccess;
     private final ProjectAccessService projectAccess;
+    private final int modelDetectionPort;
 
     public PageController(AnnotationService annotations, AdminAccessService adminAccess,
-                          ProjectAccessService projectAccess) {
+                          ProjectAccessService projectAccess,
+                          @Value("${simplelabel.model-detection-port}") int modelDetectionPort) {
         this.annotations = annotations;
         this.adminAccess = adminAccess;
         this.projectAccess = projectAccess;
+        this.modelDetectionPort = modelDetectionPort;
     }
 
     @GetMapping("/")
@@ -50,8 +54,9 @@ public class PageController {
     }
 
     @GetMapping("/model-detection")
-    String modelDetection() {
-        return "model_detection";
+    String modelDetection(HttpServletRequest request) {
+        String host = request.getServerName();
+        return "redirect:http://" + host + ":" + modelDetectionPort + "/";
     }
 
     @GetMapping("/annotate/{main}/{sub}")

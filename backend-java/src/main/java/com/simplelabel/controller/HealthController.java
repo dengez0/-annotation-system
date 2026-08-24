@@ -33,6 +33,7 @@ public class HealthController {
         checks.put("models", usable(paths.models()));
         checks.put("logs", usable(paths.logs()));
         checks.put("processed", usable(paths.processed()));
+        checks.put("backups", usable(paths.backups()));
         checks.put("static", Files.isDirectory(paths.staticResources()) && Files.isReadable(paths.staticResources()));
         checks.put("worker", worker.healthy());
         boolean healthy = checks.values().stream().allMatch(Boolean::booleanValue);

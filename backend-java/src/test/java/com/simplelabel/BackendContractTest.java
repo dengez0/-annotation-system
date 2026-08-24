@@ -24,6 +24,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest(properties = {
         "simplelabel.root=target/test-runtime",
         "simplelabel.admin-dir=admin-contract",
+        "simplelabel.yolo-worker-url=http://127.0.0.1:1",
         "simplelabel.admin-token-hashes=test-laptop=89bd1b174e1150d9c838c13d81e348d203517a1416b2f37b7f22642472cfbaf8"
 })
 @AutoConfigureMockMvc
@@ -67,7 +68,8 @@ class BackendContractTest {
                                 "simplelabel-test-device-token-0123456789abcdef")))
                 .andExpect(status().isOk());
         mvc.perform(get("/model-detection"))
-                .andExpect(status().isOk());
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("http://localhost:8000/"));
         mvc.perform(get("/static/smoke.css"))
                 .andExpect(status().isOk())
                 .andExpect(content().contentTypeCompatibleWith("text/css"));
@@ -172,6 +174,26 @@ class BackendContractTest {
                         .contentType("application/json")
                         .content("{\"name\":\"contract-device\"}"))
                 .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.name").value("contract-device"))
+                .andExpect(jsonPath("$.token", org.hamcrest.Matchers.startsWith("slt_")));
+
+        mvc.perform(get("/api/admin/tokens/contract-device/secret")
+                        .cookie(admin, csrf))
+                .andExpect(status().isForbidden());
+
+        mvc.perform(get("/api/admin/tokens/contract-device/secret")
+                        .cookie(admin, csrf)
+                        .header("X-SimpleLabel-CSRF", "csrf-test-value"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", org.hamcrest.Matchers.containsString("no-store")))
+                .andExpect(jsonPath("$.name").value("contract-device"))
+                .andExpect(jsonPath("$.token", org.hamcrest.Matchers.startsWith("slt_")));
+
+        mvc.perform(post("/api/admin/tokens/contract-device/reissue")
+                        .cookie(admin, csrf)
+                        .header("X-SimpleLabel-CSRF", "csrf-test-value"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", org.hamcrest.Matchers.containsString("no-store")))
                 .andExpect(jsonPath("$.name").value("contract-device"))
                 .andExpect(jsonPath("$.token", org.hamcrest.Matchers.startsWith("slt_")));
 

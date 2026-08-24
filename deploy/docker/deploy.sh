@@ -3,8 +3,28 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-ENV_FILE="${SCRIPT_DIR}/.env"
-COMPOSE_FILE="${SCRIPT_DIR}/compose.yml"
+PROFILE="${1:-production}"
+
+case "${PROFILE}" in
+    production)
+        ENV_FILE="${SCRIPT_DIR}/.env"
+        ENV_TEMPLATE="${SCRIPT_DIR}/.env.example"
+        COMPOSE_FILE="${SCRIPT_DIR}/compose.yml"
+        RUNTIME_DIR="${PROJECT_ROOT}/runtime"
+        WEB_PORT=18083
+        ;;
+    test)
+        ENV_FILE="${SCRIPT_DIR}/.env.test"
+        ENV_TEMPLATE="${SCRIPT_DIR}/.env.test.example"
+        COMPOSE_FILE="${SCRIPT_DIR}/compose.test.yml"
+        RUNTIME_DIR="${PROJECT_ROOT}/runtime-test"
+        WEB_PORT=18084
+        ;;
+    *)
+        echo "Usage: $0 [production|test]" >&2
+        exit 2
+        ;;
+esac
 
 command -v docker >/dev/null 2>&1 || { echo "[ERROR] docker is unavailable." >&2; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "[ERROR] host python3 is unavailable." >&2; exit 1; }
@@ -19,7 +39,7 @@ if [[ -f "${PROJECT_ROOT}/SHA256SUMS" ]]; then
     (cd "${PROJECT_ROOT}" && sha256sum --check --strict SHA256SUMS)
 fi
 
-for port in 18083; do
+for port in "${WEB_PORT}"; do
     if command -v ss >/dev/null 2>&1 && ss -ltn "( sport = :${port} )" | tail -n +2 | grep -q .; then
         echo "[ERROR] Port ${port} is already in use." >&2
         exit 1
@@ -27,12 +47,13 @@ for port in 18083; do
 done
 
 mkdir -p \
-    "${PROJECT_ROOT}/runtime/data" \
-    "${PROJECT_ROOT}/runtime/models" \
-    "${PROJECT_ROOT}/runtime/logs" \
-    "${PROJECT_ROOT}/runtime/admin" \
-    "${PROJECT_ROOT}/runtime/processed"
-chmod 700 "${PROJECT_ROOT}/runtime/admin"
+    "${RUNTIME_DIR}/data" \
+    "${RUNTIME_DIR}/models" \
+    "${RUNTIME_DIR}/logs" \
+    "${RUNTIME_DIR}/admin" \
+    "${RUNTIME_DIR}/processed" \
+    "${RUNTIME_DIR}/backups"
+chmod 700 "${RUNTIME_DIR}/admin"
 
 if [[ ! -f "${ENV_FILE}" ]]; then
     token="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
@@ -40,7 +61,7 @@ if [[ ! -f "${ENV_FILE}" ]]; then
         -e "s/^SIMPLELABEL_UID=.*/SIMPLELABEL_UID=$(id -u)/" \
         -e "s/^SIMPLELABEL_GID=.*/SIMPLELABEL_GID=$(id -g)/" \
         -e "s/^SIMPLELABEL_YOLO_WORKER_TOKEN=.*/SIMPLELABEL_YOLO_WORKER_TOKEN=${token}/" \
-        "${SCRIPT_DIR}/.env.example" > "${ENV_FILE}"
+        "${ENV_TEMPLATE}" > "${ENV_FILE}"
     chmod 600 "${ENV_FILE}"
     echo "Created ${ENV_FILE}. Configure administrator token hashes before starting the service."
 else
@@ -52,6 +73,18 @@ else
     if ! grep -q '^SIMPLELABEL_ADMIN_DIR=' "${ENV_FILE}"; then
         printf '\nSIMPLELABEL_ADMIN_DIR=/srv/simplelabel/admin\n' >> "${ENV_FILE}"
         echo "Added SIMPLELABEL_ADMIN_DIR=/srv/simplelabel/admin to the existing environment file."
+    fi
+    if ! grep -q '^SIMPLELABEL_BACKUPS_DIR=' "${ENV_FILE}"; then
+        printf '\nSIMPLELABEL_BACKUPS_DIR=/srv/simplelabel/backups\n' >> "${ENV_FILE}"
+        echo "Added SIMPLELABEL_BACKUPS_DIR=/srv/simplelabel/backups to the existing environment file."
+    fi
+    if ! grep -q '^SIMPLELABEL_MODEL_DETECTION_PORT=' "${ENV_FILE}"; then
+        if [[ "${PROFILE}" == "test" ]]; then
+            printf '\nSIMPLELABEL_MODEL_DETECTION_PORT=8001\n' >> "${ENV_FILE}"
+        else
+            printf '\nSIMPLELABEL_MODEL_DETECTION_PORT=8000\n' >> "${ENV_FILE}"
+        fi
+        echo "Added SIMPLELABEL_MODEL_DETECTION_PORT to the existing environment file."
     fi
 fi
 

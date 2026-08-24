@@ -57,7 +57,23 @@ public class DatasetProcessingController {
         String main = requiredText(body, "main");
         String sub = requiredText(body, "sub");
         List<Map<String, Object>> operations = operationList(body.get("operations"));
-        String taskId = processing.start(main, sub, operations, request.getRemoteAddr());
+        boolean supportsBackup = operations.stream().anyMatch(operation ->
+                List.of("image_repair", "json_labels", "mask_blackout").contains(operation.get("type")));
+        boolean supportsOverwrite = operations.stream().anyMatch(operation ->
+                List.of("image_repair", "json_labels").contains(operation.get("type")));
+        Object backupChoice = body.containsKey("backup_original")
+                ? body.get("backup_original") : body.get("backup_before_mask");
+        if (supportsBackup && !(backupChoice instanceof Boolean)) {
+            throw new IllegalArgumentException("backup_original must be explicitly true or false for this processing task");
+        }
+        Object overwriteChoice = body.get("overwrite_repair_json");
+        if (supportsOverwrite && !(overwriteChoice instanceof Boolean)) {
+            throw new IllegalArgumentException("overwrite_repair_json must be explicitly true or false for this processing task");
+        }
+        boolean backupOriginal = Boolean.TRUE.equals(backupChoice);
+        boolean overwriteRepairJson = Boolean.TRUE.equals(overwriteChoice);
+        String taskId = processing.start(main, sub, operations, request.getRemoteAddr(),
+                backupOriginal, overwriteRepairJson);
         return Map.of("status", "started", "task_id", taskId);
     }
 
@@ -102,7 +118,7 @@ public class DatasetProcessingController {
         processing.requireResultExists(main, sub, resultId);
         StreamingResponseBody body = output -> processing.writeResultZip(main, sub, resultId, output);
         ContentDisposition disposition = ContentDisposition.attachment()
-                .filename(sub + "-" + resultId + ".zip", StandardCharsets.UTF_8).build();
+                .filename(resultId + ".zip", StandardCharsets.UTF_8).build();
         workLog.write("PROCESS_RESULT_DOWNLOAD", request.getRemoteAddr(), main, sub,
                 resultId, null, null, null);
         return ResponseEntity.ok()
@@ -138,7 +154,7 @@ public class DatasetProcessingController {
                 Map.of("type", "image_repair"),
                 Map.of("type", "mask_blackout"),
                 Map.of("type", "yolo_export", "labels", labels));
-        String taskId = processing.start(main, sub, operations, request.getRemoteAddr());
+        String taskId = processing.start(main, sub, operations, request.getRemoteAddr(), true, true);
         return Map.of("status", "started", "task_id", taskId);
     }
 

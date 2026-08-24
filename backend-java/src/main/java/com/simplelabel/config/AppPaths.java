@@ -17,6 +17,7 @@ public class AppPaths {
     private final Path logs;
     private final Path admin;
     private final Path processed;
+    private final Path backups;
     private final Path staticResources;
 
     @Autowired
@@ -26,6 +27,7 @@ public class AppPaths {
                     @Value("${simplelabel.logs-dir}") String logs,
                     @Value("${simplelabel.admin-dir}") String admin,
                     @Value("${simplelabel.processed-dir}") String processed,
+                    @Value("${simplelabel.backups-dir}") String backups,
                     @Value("${simplelabel.static-dir}") String staticResources) {
         this.root = Path.of(root).toAbsolutePath().normalize();
         this.data = configuredPath(data);
@@ -33,11 +35,17 @@ public class AppPaths {
         this.logs = configuredPath(logs);
         this.admin = configuredPath(admin);
         this.processed = configuredPath(processed);
+        this.backups = configuredPath(backups);
         this.staticResources = configuredPath(staticResources);
     }
 
+    public AppPaths(String root, String data, String models, String logs, String admin,
+                    String processed, String staticResources) {
+        this(root, data, models, logs, admin, processed, "backups", staticResources);
+    }
+
     public AppPaths(String root) {
-        this(root, "data", "models", "logs", "admin", "processed", "static");
+        this(root, "data", "models", "logs", "admin", "processed", "backups", "static");
     }
 
     @PostConstruct
@@ -47,6 +55,7 @@ public class AppPaths {
         Files.createDirectories(logs);
         Files.createDirectories(admin);
         Files.createDirectories(processed);
+        Files.createDirectories(backups);
     }
 
     public Path root() { return root; }
@@ -55,6 +64,7 @@ public class AppPaths {
     public Path logs() { return logs; }
     public Path admin() { return admin; }
     public Path processed() { return processed; }
+    public Path backups() { return backups; }
     public Path staticResources() { return staticResources; }
 
     public Path safeDataPath(String... components) {

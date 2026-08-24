@@ -15,6 +15,7 @@ import java.time.ZoneId;
 import java.util.HexFormat;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class AdminTokenStoreTest {
     private static final Clock CLOCK = Clock.fixed(
@@ -33,11 +34,18 @@ class AdminTokenStoreTest {
         assertThat(first.authenticate(TOKEN)).contains("admin-pc-1");
         assertThat(first.authenticate(created.token())).contains("admin-pc-2");
         assertThat(registry).doesNotContain(TOKEN).doesNotContain(created.token());
+        assertThat(registry).contains("token_ciphertext");
+        assertThat(first.list()).extracting(AdminTokenStore.Device::revealable)
+                .containsExactly(false, true);
+        assertThat(first.reveal(created.name())).isEqualTo(created.token());
 
         AdminTokenStore reloaded = store("");
         assertThat(reloaded.list()).extracting(AdminTokenStore.Device::name)
                 .containsExactly("admin-pc-1", "admin-pc-2");
         assertThat(reloaded.authenticate(created.token())).contains("admin-pc-2");
+        assertThat(reloaded.reveal(created.name())).isEqualTo(created.token());
+        assertThatThrownBy(() -> reloaded.reveal("admin-pc-1"))
+                .isInstanceOf(AdminTokenStore.TokenRevealUnavailableException.class);
     }
 
     @Test
@@ -64,6 +72,21 @@ class AdminTokenStoreTest {
         assertThat(reloaded.list()).extracting(AdminTokenStore.Device::name)
                 .containsExactly("admin-pc-1", "admin-pc-2")
                 .doesNotContain("resurrected");
+    }
+
+    @Test
+    void reissueRevokesPriorSecretAndMakesLegacyEntryRevealable() throws Exception {
+        AdminTokenStore store = store("admin-pc-1=" + hash(TOKEN));
+        AdminTokenStore.CreatedToken replacement = store.reissue("admin-pc-1");
+
+        assertThat(store.authenticate(TOKEN)).isEmpty();
+        assertThat(store.authenticate(replacement.token())).contains("admin-pc-1");
+        assertThat(store.reveal("admin-pc-1")).isEqualTo(replacement.token());
+        assertThat(store.list()).extracting(AdminTokenStore.Device::revealable).containsExactly(true);
+
+        AdminTokenStore reloaded = store("");
+        assertThat(reloaded.authenticate(replacement.token())).contains("admin-pc-1");
+        assertThat(reloaded.reveal("admin-pc-1")).isEqualTo(replacement.token());
     }
 
     private AdminTokenStore store(String bootstrap) throws Exception {

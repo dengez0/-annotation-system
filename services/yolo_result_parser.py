@@ -103,3 +103,42 @@ def parse_shapes_from_results(detector, results, custom_names=None):
         return _parse_yolov5_hub_results(results, custom_names, model_names)
 
     return [], None, None
+
+
+def parse_detections_from_results(detector, results, custom_names=None):
+    """Return display-oriented boxes without changing LabelMe auto-label payloads."""
+    backend = detector['backend']
+    model_names = detector.get('model_names')
+    detections = []
+    width = height = None
+    if backend == 'ultralytics' and results:
+        height, width = results[0].orig_shape
+        for result in results:
+            for box in result.boxes:
+                x1, y1, x2, y2 = [float(value) for value in box.xyxy[0].tolist()]
+                x1, x2 = sorted((max(0, min(width, x1)), max(0, min(width, x2))))
+                y1, y2 = sorted((max(0, min(height, y1)), max(0, min(height, y2))))
+                if x2 <= x1 + 1 or y2 <= y1 + 1:
+                    continue
+                class_id = int(box.cls[0])
+                detections.append({'label': resolve_label_name(class_id, custom_names, model_names),
+                                   'confidence': float(box.conf[0]), 'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2})
+    elif backend == 'yolov5_hub' and hasattr(results, 'xyxy') and results.xyxy:
+        try:
+            height, width = results.ims[0].shape[:2]
+        except Exception:
+            pass
+        rows = results.xyxy[0].tolist() if hasattr(results.xyxy[0], 'tolist') else results.xyxy[0]
+        for row in rows:
+            if len(row) < 6:
+                continue
+            x1, y1, x2, y2, score, class_id = row[:6]
+            if width is not None and height is not None:
+                x1, x2 = sorted((max(0, min(width, x1)), max(0, min(width, x2))))
+                y1, y2 = sorted((max(0, min(height, y1)), max(0, min(height, y2))))
+            if x2 <= x1 + 1 or y2 <= y1 + 1:
+                continue
+            detections.append({'label': resolve_label_name(int(class_id), custom_names, model_names),
+                               'confidence': float(score), 'x1': float(x1), 'y1': float(y1),
+                               'x2': float(x2), 'y2': float(y2)})
+    return detections, width, height

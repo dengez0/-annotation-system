@@ -13,12 +13,14 @@ services:
       TZ: "${SIMPLELABEL_TIME_ZONE:-Asia/Shanghai}"
     ports:
       - "0.0.0.0:${SIMPLELABEL_PORT:-18083}:18083"
+      - "0.0.0.0:${SIMPLELABEL_MODEL_DETECTION_PORT:-8000}:8000"
     volumes:
       - ../../runtime/data:/srv/simplelabel/data
       - ../../runtime/models:/srv/simplelabel/models
       - ../../runtime/logs:/srv/simplelabel/logs
       - ../../runtime/admin:/srv/simplelabel/admin
       - ../../runtime/processed:/srv/simplelabel/processed
+      - ../../runtime/backups:/srv/simplelabel/backups
     tmpfs:
       - /tmp:size=2g,mode=1777
     healthcheck:

@@ -87,7 +87,7 @@
         }
         .token-actions { display:flex; gap:8px; flex-wrap:wrap; }
         .table-wrap { overflow-x:auto; border:1px solid var(--border-color); border-radius:8px; }
-        table { width:100%; min-width:620px; border-collapse:collapse; }
+        table { width:100%; min-width:820px; border-collapse:collapse; }
         th, td { padding:13px 15px; text-align:left; border-bottom:1px solid var(--border-color); }
         th {
             background:#202020; color:var(--text-secondary); font-size:11px;
@@ -99,6 +99,14 @@
         tbody tr:last-child td { border-bottom:0; }
         .device-name { color:#f3f4f6; font-weight:650; }
         .created-at { color:var(--text-secondary); font-variant-numeric:tabular-nums; }
+        .token-cell { min-width:250px; }
+        .token-secret { display:inline-block; max-width:330px; overflow:hidden; text-overflow:ellipsis; vertical-align:middle; color:#d8b4fe; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing:.04em; user-select:all; }
+        .token-secret.masked { color:var(--text-secondary); letter-spacing:.15em; user-select:none; }
+        .token-toggle { display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; margin-left:8px; padding:0; vertical-align:middle; border:1px solid var(--border-light); border-radius:6px; background:var(--bg-toolbar); color:#d1d5db; cursor:pointer; }
+        .token-toggle:hover { background:var(--bg-hover); color:#fff; }
+        .token-toggle:focus-visible { outline:2px solid #8b5cf6; outline-offset:2px; }
+        .token-toggle:disabled { cursor:not-allowed; opacity:.42; }
+        .token-toggle svg { width:16px; height:16px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
         .action-cell { width:1%; white-space:nowrap; }
         @media (max-width: 680px) {
             .shell { width:min(100% - 24px, 1040px); padding-top:24px; }
@@ -116,7 +124,7 @@
         <div>
             <p class="eyebrow">SimpleLabel · Access Control</p>
             <h1>管理员令牌管理</h1>
-            <p class="page-description">集中管理具有管理员权限的设备。令牌只在创建时显示一次，服务端仅保存不可逆哈希。</p>
+            <p class="page-description">集中管理具有管理员权限的设备。新令牌可按需显示；旧版令牌需重新签发后才能显示。</p>
             <span class="device-badge">当前设备：<strong th:text="${currentDevice}"></strong></span>
         </div>
         <nav class="header-actions" aria-label="页面操作">
@@ -143,7 +151,7 @@
         </form>
         <p id="create-error" class="error" role="alert"></p>
         <div id="token-result" class="token-result" role="status" aria-live="polite">
-            <strong class="token-result-title">令牌已生成</strong>
+            <strong id="token-result-title" class="token-result-title">令牌已生成</strong>
             <p>请立即复制并安全保存，关闭或刷新页面后无法再次查看。</p>
             <code id="token-value" class="token-value"></code>
             <div class="token-actions">
@@ -161,13 +169,25 @@
         </div>
         <div class="table-wrap">
             <table>
-                <thead><tr><th>设备名</th><th>创建时间</th><th>操作</th></tr></thead>
+                <thead><tr><th>设备名</th><th>创建时间</th><th>密钥</th><th>权限操作</th></tr></thead>
                 <tbody>
                 <tr th:each="device : ${devices}">
                     <td><span class="device-name" th:text="${device.name}"></span><span class="current" th:if="${device.current}">当前设备</span></td>
                     <td class="created-at" th:text="${device.created_at}"></td>
-                    <td class="action-cell"><button class="button button-danger" type="button" th:disabled="${device.current}"
-                                th:attr="data-name=${device.name}" onclick="deleteDevice(this.dataset.name)">撤销权限</button></td>
+                    <td class="token-cell">
+                        <code class="token-secret masked" th:attr="data-name=${device.name}">****************</code>
+                        <button class="token-toggle" type="button" th:disabled="${!device.revealable}"
+                                th:attr="data-name=${device.name},title=${device.revealable ? '显示完整密钥' : '旧版密钥未保存明文，无法显示'},aria-label=${device.revealable ? '显示完整密钥' : '旧版密钥无法显示'}"
+                                onclick="toggleToken(this)">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"></path><circle cx="12" cy="12" r="2.8"></circle></svg>
+                        </button>
+                    </td>
+                    <td class="action-cell">
+                        <button class="button" type="button" th:if="${!device.revealable}"
+                                th:attr="data-name=${device.name}" onclick="reissueDevice(this.dataset.name)">重新签发</button>
+                        <button class="button button-danger" type="button" th:disabled="${device.current}"
+                                th:attr="data-name=${device.name}" onclick="deleteDevice(this.dataset.name)">撤销权限</button>
+                    </td>
                 </tr>
                 </tbody>
             </table>
@@ -191,6 +211,7 @@
             const data = await response.json();
             if (!response.ok) { throw new Error(data.error || '创建失败'); }
             document.getElementById('token-value').textContent = data.token;
+            document.getElementById('token-result-title').textContent = '令牌已生成';
             document.getElementById('token-result').style.display = 'block';
             button.textContent = '令牌已生成';
         } catch (requestError) {
@@ -208,6 +229,34 @@
             button.textContent = '复制失败，请手动选择';
         }
     });
+    async function toggleToken(button) {
+        const name = button.dataset.name;
+        const value = document.querySelector(`.token-secret[data-name="${CSS.escape(name)}"]`);
+        if (!value) return;
+        if (!value.classList.contains('masked')) {
+            value.textContent = '****************';
+            value.classList.add('masked');
+            button.title = '显示完整密钥';
+            button.setAttribute('aria-label', '显示完整密钥');
+            return;
+        }
+        button.disabled = true;
+        try {
+            const response = await fetch('/api/admin/tokens/' + encodeURIComponent(name) + '/secret', {
+                headers: {'X-SimpleLabel-CSRF': CSRF_TOKEN}, cache: 'no-store'
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || '无法显示密钥');
+            value.textContent = data.token;
+            value.classList.remove('masked');
+            button.title = '隐藏密钥';
+            button.setAttribute('aria-label', '隐藏密钥');
+        } catch (requestError) {
+            alert(requestError.message || '无法显示密钥');
+        } finally {
+            button.disabled = false;
+        }
+    }
     async function deleteDevice(name) {
         if (!confirm(`确认撤销设备 ${name}？`)) return;
         const response = await fetch('/api/admin/tokens/' + encodeURIComponent(name), {
@@ -215,6 +264,17 @@
         });
         if (response.ok) { location.reload(); return; }
         const data = await response.json(); alert(data.error || '撤销失败');
+    }
+    async function reissueDevice(name) {
+        if (!confirm(`确认重新签发设备 ${name} 的密钥？旧密钥会立即失效。`)) return;
+        const response = await fetch('/api/admin/tokens/' + encodeURIComponent(name) + '/reissue', {
+            method:'POST', headers:{'X-SimpleLabel-CSRF':CSRF_TOKEN}, cache:'no-store'
+        });
+        const data = await response.json();
+        if (!response.ok) { alert(data.error || '重新签发失败'); return; }
+        document.getElementById('token-value').textContent = data.token;
+        document.getElementById('token-result-title').textContent = '令牌已重新签发';
+        document.getElementById('token-result').style.display = 'block';
     }
 </script>
 </body>

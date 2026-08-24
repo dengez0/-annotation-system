@@ -27,6 +27,8 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -34,6 +36,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -42,7 +45,10 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -52,8 +58,12 @@ public class DatasetProcessingService {
     private static final String MANAGED_SOURCE_MAIN = "已完成";
     private static final Set<String> OPERATION_TYPES = Set.of(
             "image_repair", "json_labels", "mask_blackout", "file_rename", "yolo_export");
-    private static final DateTimeFormatter RESULT_TIME = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")
+    private static final DateTimeFormatter RESULT_TIME = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")
             .withZone(ZoneId.systemDefault());
+    private static final Pattern NEW_RESULT_ID = Pattern.compile(
+            "dp_(\\d{8}_\\d{6})_([0-9a-f]{16})_(\\d{6})");
+    private static final Pattern CURRENT_RESULT_ID = Pattern.compile("\\d{8}-\\d{6}-[0-9a-f]{8}");
+    private static final Pattern LEGACY_RESULT_ID = Pattern.compile(".+_\\d{8}_\\d{6}");
     private static final long SPACE_MARGIN = 1024L * 1024L * 1024L;
 
     private final AppPaths paths;
@@ -61,6 +71,7 @@ public class DatasetProcessingService {
     private final TaskService tasks;
     private final ObjectMapper mapper;
     private final WorkLogService workLog;
+    private final Set<String> activeProjects = ConcurrentHashMap.newKeySet();
 
     public DatasetProcessingService(AppPaths paths, AnnotationService annotations, TaskService tasks,
                                     ObjectMapper mapper, WorkLogService workLog) {
@@ -87,8 +98,9 @@ public class DatasetProcessingService {
         result.put("images", scan.images().size());
         result.put("json_files", scan.jsonFiles().size());
         result.put("bytes", scan.bytes());
-        result.put("estimated_required_bytes", requiredSpace(scan.bytes()));
+        result.put("estimated_required_bytes", workingSpace(scan.bytes()));
         result.put("available_bytes", Files.getFileStore(paths.processed()).getUsableSpace());
+        result.put("task_hash", taskHash(main, sub));
         result.put("labels", labelsFor(source));
         result.put("sample_images", scan.images().stream().limit(8)
                 .map(path -> source.relativize(path).toString().replace('\\', '/')).toList());
@@ -105,27 +117,42 @@ public class DatasetProcessingService {
                 Map.of("type", "image_repair"),
                 Map.of("type", "mask_blackout"),
                 Map.of("type", "yolo_export", "labels", order == null ? List.of() : order));
-        return start(main, sub, operations, "local");
+        return start(main, sub, operations, "local", true, true);
     }
 
     public String start(String main, String sub, List<Map<String, Object>> requested, String clientIp) throws IOException {
-        Path source = requireProject(main, sub);
+        return start(main, sub, requested, clientIp, false, false);
+    }
+
+    public String start(String main, String sub, List<Map<String, Object>> requested,
+                        String clientIp, boolean backupBeforeMask) throws IOException {
+        return start(main, sub, requested, clientIp, backupBeforeMask, true);
+    }
+
+    public String start(String main, String sub, List<Map<String, Object>> requested,
+                        String clientIp, boolean backupOriginal, boolean overwriteRepairJson) throws IOException {
+        Path source = requireManagedSourceProject(main, sub);
         List<Map<String, Object>> operations = normalizeOperations(requested);
         Scan scan = scan(source);
-        long required = requiredSpace(scan.bytes());
-        FileStore store = Files.getFileStore(paths.processed());
-        if (store.getUsableSpace() < required) {
-            throw new ApiException(HttpStatus.INSUFFICIENT_STORAGE,
-                    "Insufficient disk space: required " + required + " bytes, available " + store.getUsableSpace());
-        }
+        ensureProcessingSpace(scan.bytes(), backupOriginal);
 
+        String projectKey = main + "\0" + sub;
+        if (!activeProjects.add(projectKey)) {
+            throw new ApiException(HttpStatus.CONFLICT, "A data-processing task is already running for this project");
+        }
         String taskId = tasks.create("data_processing");
-        String resultId = RESULT_TIME.format(Instant.now()) + "-" + taskId.substring(0, 8);
-        TaskService.TaskState state = tasks.state(taskId);
-        state.stage("queued");
-        state.operation(operations.get(0).get("type").toString());
-        tasks.submit(() -> run(taskId, resultId, source, main, sub, operations, clientIp, scan));
-        return taskId;
+        try {
+            String resultId = nextResultId(main, sub, taskHash(main, sub), Instant.now());
+            TaskService.TaskState state = tasks.state(taskId);
+            state.stage("queued");
+            state.operation(operations.get(0).get("type").toString());
+            tasks.submit(() -> run(taskId, resultId, source, main, sub, operations, clientIp,
+                    scan, backupOriginal, overwriteRepairJson, projectKey));
+            return taskId;
+        } catch (IOException | RuntimeException exception) {
+            activeProjects.remove(projectKey);
+            throw exception;
+        }
     }
 
     public List<Map<String, Object>> results(String main, String sub) throws IOException {
@@ -189,6 +216,9 @@ public class DatasetProcessingService {
     }
 
     public Map<String, Object> deleteSourceProject(String main, String sub) throws IOException {
+        if (activeProjects.contains(main + "\0" + sub)) {
+            throw new ApiException(HttpStatus.CONFLICT, "The project is currently being processed");
+        }
         Path source = requireManagedSourceProject(main, sub);
         Scan scan = scan(source);
         deleteTree(source);
@@ -201,9 +231,14 @@ public class DatasetProcessingService {
     }
 
     private void run(String taskId, String resultId, Path source, String main, String sub,
-                     List<Map<String, Object>> operations, String clientIp, Scan sourceScan) {
+                     List<Map<String, Object>> operations, String clientIp, Scan sourceScan,
+                     boolean backupOriginal, boolean overwriteRepairJson, String projectKey) {
         TaskService.TaskState task = tasks.state(taskId);
         Path staging = null;
+        Path writebackRoot = null;
+        Path rollback = null;
+        boolean sourceSwapped = false;
+        Path backup = null;
         String operationNames = operations.stream().map(item -> String.valueOf(item.get("type"))).toList().toString();
         workLog.write("PROCESS_DATASET_START", clientIp, main, sub, operationNames, null, null, resultId);
         try {
@@ -213,55 +248,119 @@ public class DatasetProcessingService {
             Path dataset = staging.resolve("dataset");
             List<Map<String, String>> failures = new ArrayList<>();
             Map<String, Integer> summary = new LinkedHashMap<>();
-            int totalWork = sourceScan.files().size();
+            List<Map<String, Object>> writebackOperations = operations.stream()
+                    .filter(operation -> shouldWriteBack(String.valueOf(operation.get("type")), overwriteRepairJson))
+                    .toList();
+            int totalWork = sourceScan.files().size() * (backupOriginal ? 2 : 1);
             for (Map<String, Object> operation : operations) {
                 totalWork += workUnits(sourceScan, String.valueOf(operation.get("type")));
             }
+            if (!writebackOperations.isEmpty()) {
+                totalWork += sourceScan.files().size();
+                for (Map<String, Object> operation : writebackOperations) {
+                    totalWork += workUnits(sourceScan, String.valueOf(operation.get("type")));
+                }
+            }
             Progress progress = new Progress(task, Math.max(totalWork, 1));
+
+            if (backupOriginal) {
+                task.stage("backup");
+                task.operation("backup_source");
+                backup = createProcessingBackup(source, main, sub, taskId, resultId, progress);
+                workLog.write("PROCESS_DATASET_BACKUP", clientIp, main, sub,
+                        "folder", sourceScan.files().size(), null, backupDisplay(backup));
+            }
 
             task.stage("copying");
             task.operation("copy_source");
             copyTree(source, dataset, progress);
 
-            for (Map<String, Object> operation : operations) {
-                checkCancelled(task);
-                String type = String.valueOf(operation.get("type"));
-                task.operation(type);
-                task.stage("processing");
-                int changed = switch (type) {
-                    case "image_repair" -> repairImages(dataset, failures, progress);
-                    case "json_labels" -> modifyJsonLabels(dataset, operation, failures, progress);
-                    case "mask_blackout" -> blackoutMasks(dataset, failures, progress);
-                    case "file_rename" -> renameFiles(dataset, operation, failures, progress);
-                    case "yolo_export" -> exportYolo(dataset, operation, failures, progress);
-                    default -> throw new IllegalArgumentException("Unsupported operation: " + type);
-                };
-                summary.put(type, changed);
-            }
+            applyOperations(dataset, operations, failures, progress, resultId, summary, task);
             checkCancelled(task);
+            if (!failures.isEmpty()) {
+                throw new IOException("Processing failed for " + failures.size() + " file(s); source data was not changed");
+            }
 
             ObjectNode report = mapper.createObjectNode();
             report.put("result_id", resultId);
             report.put("source", "data/" + main + "/" + sub);
             report.put("source_bytes", sourceScan.bytes());
             report.put("completed_at", Instant.now().toString());
+            report.put("source_written_back", !writebackOperations.isEmpty());
+            report.put("backup_created", backup != null);
+            if (backup != null) report.put("backup_path", backupDisplay(backup));
             report.set("operations", mapper.valueToTree(operations));
+            report.set("writeback_operations", mapper.valueToTree(writebackOperations));
             report.set("summary", mapper.valueToTree(summary));
             report.set("failed", mapper.valueToTree(failures));
             mapper.writerWithDefaultPrettyPrinter().writeValue(staging.resolve("report.json").toFile(), report);
 
+            if (!writebackOperations.isEmpty()) {
+                task.stage("writeback");
+                task.operation("prepare_writeback");
+                writebackRoot = paths.safeDataPath(".processing-staging", taskId);
+                Path replacement = writebackRoot.resolve("dataset");
+                copyTree(source, replacement, progress);
+                Map<String, Integer> writebackSummary = new LinkedHashMap<>();
+                applyOperations(replacement, writebackOperations, failures, progress, resultId,
+                        writebackSummary, task);
+                if (!failures.isEmpty()) {
+                    throw new IOException("Writeback preparation failed for " + failures.size()
+                            + " file(s); source data was not changed");
+                }
+                checkCancelled(task);
+                if (!task.lockCancellation()) throw new TaskCancelled();
+
+                rollback = paths.safeDataPath(".processing-rollback", taskId);
+                Files.createDirectories(rollback.getParent());
+                moveDirectory(source, rollback);
+                sourceSwapped = true;
+                try {
+                    moveDirectory(replacement, source);
+                } catch (Exception exception) {
+                    restoreSource(source, rollback);
+                    sourceSwapped = false;
+                    rollback = null;
+                    throw exception;
+                }
+            }
+
             Path finalDirectory = parent.resolve(resultId);
             moveDirectory(staging, finalDirectory);
             staging = null;
-            task.result(resultId, Map.of("counts", summary, "failures", failures.size(),
-                    "main", main, "sub", sub));
+            if (rollback != null) {
+                try { deleteTree(rollback); } catch (IOException ignored) { }
+                rollback = null;
+            }
+            sourceSwapped = false;
+            Map<String, Object> taskSummary = new LinkedHashMap<>();
+            taskSummary.put("counts", summary);
+            taskSummary.put("failures", failures.size());
+            taskSummary.put("main", main);
+            taskSummary.put("sub", sub);
+            taskSummary.put("source_written_back", !writebackOperations.isEmpty());
+            taskSummary.put("writeback_operations", writebackOperations.stream()
+                    .map(item -> String.valueOf(item.get("type"))).toList());
+            taskSummary.put("backup_path", backup == null ? "" : backupDisplay(backup));
+            task.result(resultId, taskSummary);
             task.stage("completed");
             task.complete();
             workLog.write("PROCESS_DATASET_COMPLETE", clientIp, main, sub, operationNames,
                     sourceScan.images().size(), null, "processed/" + main + "/" + sub + "/" + resultId);
         } catch (TaskCancelled exception) {
-            workLog.write("PROCESS_DATASET_CANCEL", clientIp, main, sub, operationNames, null, null, resultId);
+            try {
+                if (sourceSwapped) restoreSource(source, rollback);
+                workLog.write("PROCESS_DATASET_CANCEL", clientIp, main, sub, operationNames, null, null, resultId);
+            } catch (RuntimeException rollbackFailure) {
+                task.fail(rollbackFailure);
+                workLog.write("PROCESS_DATASET_FAILED", clientIp, main, sub,
+                        "rollback: " + rollbackFailure.getMessage(), null, null, resultId);
+            }
         } catch (Exception exception) {
+            if (sourceSwapped) {
+                try { restoreSource(source, rollback); }
+                catch (RuntimeException rollbackFailure) { exception.addSuppressed(rollbackFailure); }
+            }
             task.fail(exception);
             workLog.write("PROCESS_DATASET_FAILED", clientIp, main, sub,
                     operationNames + ": " + exception.getMessage(), null, null, resultId);
@@ -269,7 +368,41 @@ public class DatasetProcessingService {
             if (staging != null) {
                 try { deleteTree(staging); } catch (IOException ignored) { }
             }
+            if (writebackRoot != null) {
+                try { deleteTree(writebackRoot); } catch (IOException ignored) { }
+            }
+            activeProjects.remove(projectKey);
         }
+    }
+
+    private void applyOperations(Path dataset, List<Map<String, Object>> operations,
+                                 List<Map<String, String>> failures, Progress progress,
+                                 String resultId, Map<String, Integer> summary,
+                                 TaskService.TaskState task) throws IOException {
+        for (Map<String, Object> operation : operations) {
+            checkCancelled(task);
+            String type = String.valueOf(operation.get("type"));
+            task.operation(type);
+            task.stage("processing");
+            int changed = switch (type) {
+                case "image_repair" -> repairImages(dataset, failures, progress);
+                case "json_labels" -> modifyJsonLabels(dataset, operation, failures, progress);
+                case "mask_blackout" -> blackoutMasks(dataset, failures, progress);
+                case "file_rename" -> renameFiles(dataset, operation, failures, progress, resultId);
+                case "yolo_export" -> exportYolo(dataset, operation, failures, progress);
+                default -> throw new IllegalArgumentException("Unsupported operation: " + type);
+            };
+            summary.put(type, changed);
+        }
+    }
+
+    private static boolean shouldWriteBack(String type, boolean overwriteRepairJson) {
+        return switch (type) {
+            case "image_repair", "json_labels" -> overwriteRepairJson;
+            case "mask_blackout", "file_rename" -> true;
+            case "yolo_export" -> false;
+            default -> false;
+        };
     }
 
     private int repairImages(Path dataset, List<Map<String, String>> failures, Progress progress) throws IOException {
@@ -341,13 +474,23 @@ public class DatasetProcessingService {
             try {
                 if (!Files.isRegularFile(json)) { progress.bump(changed); continue; }
                 JsonNode root = mapper.readTree(json.toFile());
+                if (!(root instanceof ObjectNode object) || !object.path("shapes").isArray()) {
+                    progress.bump(changed);
+                    continue;
+                }
                 BufferedImage canvas = toRgb(readImage(image));
                 Graphics2D graphics = canvas.createGraphics();
                 graphics.setColor(Color.BLACK);
                 boolean masked = false;
+                boolean removed = false;
+                ArrayNode remaining = mapper.createArrayNode();
                 try {
-                    for (JsonNode shape : root.path("shapes")) {
-                        if (!"mask".equals(shape.path("label").asText(""))) continue;
+                    for (JsonNode shape : object.path("shapes")) {
+                        if (!"mask".equals(shape.path("label").asText(""))) {
+                            remaining.add(shape);
+                            continue;
+                        }
+                        removed = true;
                         List<double[]> points = points(shape.path("points"));
                         if (points.size() >= 3) {
                             Path2D polygon = new Path2D.Double();
@@ -370,8 +513,10 @@ public class DatasetProcessingService {
                 }
                 if (masked) {
                     writeImageAtomic(image, canvas);
-                    changed++;
                 }
+                if (removed) AnnotationService.atomicWrite(json,
+                        mapper.writerWithDefaultPrettyPrinter().writeValueAsBytes(object.set("shapes", remaining)));
+                if (masked || removed) changed++;
             } catch (Exception exception) {
                 failure(failures, dataset, image, "mask_blackout", exception);
             }
@@ -381,19 +526,23 @@ public class DatasetProcessingService {
     }
 
     private int renameFiles(Path dataset, Map<String, Object> operation,
-                            List<Map<String, String>> failures, Progress progress) throws IOException {
+                            List<Map<String, String>> failures, Progress progress,
+                            String resultId) throws IOException {
         List<Path> images = imageFiles(dataset);
-        String mode = text(operation, "mode", "sequence");
+        String mode = text(operation, "mode", "unique_timestamp");
         Map<Path, Path> moves = new LinkedHashMap<>();
         int index = integer(operation, "start", 1);
         int padding = integer(operation, "padding", 6);
         if (index < 0 || padding < 1 || padding > 12) throw new IllegalArgumentException("Invalid rename numbering");
+        int uniqueIndex = 1;
         for (Path image : images) {
             String oldName = image.getFileName().toString();
             String oldStem = AnnotationService.stem(oldName);
             String extension = oldName.substring(oldStem.length());
             String newStem;
-            if ("sequence".equals(mode)) {
+            if ("unique_timestamp".equals(mode)) {
+                newStem = uniqueImagePrefix(resultId) + String.format(Locale.ROOT, "%08d", uniqueIndex++);
+            } else if ("sequence".equals(mode)) {
                 newStem = text(operation, "prefix", "image_")
                         + String.format(Locale.ROOT, "%0" + padding + "d", index++)
                         + text(operation, "suffix", "");
@@ -402,7 +551,7 @@ public class DatasetProcessingService {
                 String replaced = find.isEmpty() ? oldStem : oldStem.replace(find, text(operation, "replace", ""));
                 newStem = text(operation, "prefix", "") + replaced + text(operation, "suffix", "");
             } else {
-                throw new IllegalArgumentException("Rename mode must be sequence or pattern");
+                throw new IllegalArgumentException("Rename mode must be unique_timestamp, sequence or pattern");
             }
             AnnotationService.fileName(newStem + extension);
             addMove(moves, image, image.resolveSibling(newStem + extension));
@@ -485,12 +634,16 @@ public class DatasetProcessingService {
             copy.put("type", type);
             if ("json_labels".equals(type)) labelRules(copy.get("rules"));
             if ("file_rename".equals(type)) {
-                String mode = text(copy, "mode", "sequence");
-                if (!Set.of("sequence", "pattern").contains(mode)) throw new IllegalArgumentException("Invalid rename mode");
+                String mode = text(copy, "mode", "unique_timestamp");
+                if (!Set.of("unique_timestamp", "sequence", "pattern").contains(mode)) {
+                    throw new IllegalArgumentException("Invalid rename mode");
+                }
             }
             if ("yolo_export".equals(type)) stringList(copy.get("labels"));
             result.add(copy);
         }
+        // TXT conversion consumes the final JSON state, including mask-label removal.
+        result.sort(Comparator.comparing(operation -> "yolo_export".equals(operation.get("type"))));
         return List.copyOf(result);
     }
 
@@ -542,6 +695,7 @@ public class DatasetProcessingService {
     private Path requireResult(String main, String sub, String resultId) {
         AnnotationService.validateComponent(main);
         AnnotationService.validateComponent(sub);
+        AnnotationService.validateComponent(resultId);
         if (!validResultId(resultId)) throw new IllegalArgumentException("Invalid result identifier");
         Path result = AppPaths.safeResolve(paths.processed(), main, sub, resultId);
         if (!Files.isDirectory(result)) throw new ApiException(HttpStatus.NOT_FOUND, "Result not found");
@@ -549,11 +703,144 @@ public class DatasetProcessingService {
     }
 
     private static boolean validResultId(String value) {
-        return value != null && value.matches("\\d{8}-\\d{6}-[0-9a-f]{8}");
+        return value != null && (NEW_RESULT_ID.matcher(value).matches()
+                || CURRENT_RESULT_ID.matcher(value).matches()
+                || LEGACY_RESULT_ID.matcher(value).matches());
     }
 
-    private static long requiredSpace(long bytes) {
-        return (long) Math.ceil(bytes * 1.25d) + SPACE_MARGIN;
+    private static long workingSpace(long bytes) {
+        return (long) Math.ceil(bytes * 2.25d) + SPACE_MARGIN;
+    }
+
+    private void ensureProcessingSpace(long bytes, boolean backup) throws IOException {
+        Files.createDirectories(paths.processed());
+        Files.createDirectories(paths.data());
+        Files.createDirectories(paths.backups());
+        Map<FileStore, Long> requiredByStore = new HashMap<>();
+        addRequired(requiredByStore, Files.getFileStore(paths.processed()), (long) Math.ceil(bytes * 1.25d));
+        addRequired(requiredByStore, Files.getFileStore(paths.data()), bytes);
+        if (backup) addRequired(requiredByStore, Files.getFileStore(paths.backups()), bytes);
+        for (Map.Entry<FileStore, Long> entry : requiredByStore.entrySet()) {
+            long required = entry.getValue() + SPACE_MARGIN;
+            long available = entry.getKey().getUsableSpace();
+            if (available < required) {
+                throw new ApiException(HttpStatus.INSUFFICIENT_STORAGE,
+                        "Insufficient disk space: required " + required + " bytes, available " + available);
+            }
+        }
+    }
+
+    private static void addRequired(Map<FileStore, Long> values, FileStore store, long bytes) {
+        values.merge(store, bytes, Long::sum);
+    }
+
+    private synchronized String nextResultId(String main, String sub, String hash, Instant now) throws IOException {
+        Path parent = AppPaths.safeResolve(paths.processed(), main, sub);
+        Files.createDirectories(parent);
+        int sequence = 0;
+        try (Stream<Path> stream = Files.list(parent)) {
+            for (Path path : stream.filter(Files::isDirectory).toList()) {
+                Matcher matcher = NEW_RESULT_ID.matcher(path.getFileName().toString());
+                if (matcher.matches() && hash.equals(matcher.group(2))) {
+                    sequence = Math.max(sequence, Integer.parseInt(matcher.group(3)));
+                }
+            }
+        }
+        if (sequence >= 999_999) throw new IOException("Result sequence is exhausted for this project");
+        return "dp_" + RESULT_TIME.format(now) + "_" + hash + "_"
+                + String.format(Locale.ROOT, "%06d", sequence + 1);
+    }
+
+    private static String taskHash(String main, String sub) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest((main + "\0" + sub).getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest, 0, 8);
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is unavailable", exception);
+        }
+    }
+
+    private static String uniqueImagePrefix(String resultId) {
+        Matcher matcher = NEW_RESULT_ID.matcher(resultId);
+        if (!matcher.matches()) throw new IllegalArgumentException("Unique rename requires a current result identifier");
+        return "img_" + matcher.group(1) + "_" + matcher.group(2) + "_";
+    }
+
+    private Path createProcessingBackup(Path source, String main, String sub, String taskId,
+                                        String resultId, Progress progress) throws IOException {
+        Matcher matcher = NEW_RESULT_ID.matcher(resultId);
+        if (!matcher.matches()) throw new IOException("Invalid result identifier for processing backup");
+        Path backup = AppPaths.safeResolve(paths.backups(), "processing", matcher.group(2),
+                "backup_" + matcher.group(1) + "_" + matcher.group(3));
+        if (Files.exists(backup)) throw new IOException("Processing backup already exists: " + backup.getFileName());
+        Path dataset = backup.resolve("dataset");
+        try {
+            copyTree(source, dataset, progress);
+            Scan original = scan(source);
+            Scan copied = scan(dataset);
+            if (original.files().size() != copied.files().size() || original.bytes() != copied.bytes()) {
+                throw new IOException("Mask backup verification failed: file count or size mismatch");
+            }
+            ArrayNode checksums = mapper.createArrayNode();
+            for (Path file : original.files()) {
+                String relative = source.relativize(file).toString().replace('\\', '/');
+                String sourceHash = sha256(file);
+                Path backupFile = dataset.resolve(source.relativize(file).toString());
+                if (!sourceHash.equals(sha256(backupFile))) {
+                    throw new IOException("Mask backup verification failed: " + relative);
+                }
+                ObjectNode item = checksums.addObject();
+                item.put("path", relative);
+                item.put("sha256", sourceHash);
+                item.put("bytes", Files.size(file));
+            }
+            ObjectNode manifest = mapper.createObjectNode();
+            manifest.put("source", "data/" + main + "/" + sub);
+            manifest.put("task_id", taskId);
+            manifest.put("result_id", resultId);
+            manifest.put("created_at", Instant.now().toString());
+            manifest.put("files", original.files().size());
+            manifest.put("bytes", original.bytes());
+            manifest.set("checksums", checksums);
+            AnnotationService.atomicWrite(backup.resolve("manifest.json"),
+                    mapper.writerWithDefaultPrettyPrinter().writeValueAsBytes(manifest));
+            return backup;
+        } catch (IOException | RuntimeException exception) {
+            try { deleteTree(backup); } catch (IOException cleanup) { exception.addSuppressed(cleanup); }
+            throw exception;
+        }
+    }
+
+    private static String sha256(Path file) throws IOException {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            try (var input = Files.newInputStream(file)) {
+                byte[] buffer = new byte[64 * 1024];
+                for (int read; (read = input.read(buffer)) >= 0; ) {
+                    if (read > 0) digest.update(buffer, 0, read);
+                }
+            }
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is unavailable", exception);
+        }
+    }
+
+    private static void restoreSource(Path source, Path rollback) {
+        try {
+            if (rollback == null || !Files.isDirectory(rollback)) {
+                throw new IOException("Source rollback directory is unavailable");
+            }
+            deleteTree(source);
+            moveDirectory(rollback, source);
+        } catch (IOException exception) {
+            throw new IllegalStateException("Failed to restore source data", exception);
+        }
+    }
+
+    private String backupDisplay(Path backup) {
+        return "backups/" + paths.backups().relativize(backup).toString().replace('\\', '/');
     }
 
     private static Scan scan(Path root) throws IOException {
@@ -740,7 +1027,7 @@ public class DatasetProcessingService {
             minX = Math.max(0, minX); minY = Math.max(0, minY);
             maxX = Math.min(width, maxX); maxY = Math.min(height, maxY);
             if (maxX <= minX || maxY <= minY) continue;
-            lines.add(String.format(Locale.ROOT, "%d %.6f %.6f %.6f %.6f", ids.get(label),
+            lines.add(String.format(Locale.ROOT, "%d %.16f %.16f %.16f %.16f", ids.get(label),
                     ((minX + maxX) / 2) / width, ((minY + maxY) / 2) / height,
                     (maxX - minX) / width, (maxY - minY) / height));
         }

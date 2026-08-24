@@ -44,6 +44,7 @@ public class TaskService {
         private int total;
         private int processedCount;
         private boolean cancel;
+        private boolean cancellationLocked;
         private String error;
         private String backend;
         private String stage = "queued";
@@ -53,7 +54,15 @@ public class TaskService {
 
         TaskState(String backend) { this.backend = backend; }
         public synchronized boolean cancelled() { return cancel; }
-        public synchronized void cancel() { cancel = true; status = "cancelled"; stage = "cancelled"; }
+        public synchronized void cancel() {
+            if (cancellationLocked) return;
+            cancel = true; status = "cancelled"; stage = "cancelled";
+        }
+        public synchronized boolean lockCancellation() {
+            if (cancel) return false;
+            cancellationLocked = true;
+            return true;
+        }
         public synchronized void total(int value) { total = value; }
         public synchronized void progress(int value, int processed) { progress = value; processedCount = processed; }
         public synchronized void backend(String value) { backend = value; }

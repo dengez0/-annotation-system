@@ -49,11 +49,40 @@ public class YoloWorkerClient {
         return body;
     }
 
+    public JsonNode detect(String modelName, Path image, double confidence, double iou)
+            throws IOException, InterruptedException {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("model_name", modelName); payload.put("image_path", image.toAbsolutePath().toString());
+        payload.put("confidence", confidence); payload.put("iou", iou);
+        HttpRequest request = HttpRequest.newBuilder(URI.create(baseUrl + "/internal/yolo/detect"))
+                .timeout(Duration.ofMinutes(15)).header("Content-Type", "application/json")
+                .header("X-SimpleLabel-Worker-Token", token)
+                .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(payload), StandardCharsets.UTF_8)).build();
+        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        JsonNode body = mapper.readTree(response.body());
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IOException(body.path("error").asText("YOLO worker returned HTTP " + response.statusCode()));
+        }
+        return body;
+    }
+
     public boolean healthy() {
         try {
             HttpRequest request = HttpRequest.newBuilder(URI.create(baseUrl + "/internal/health"))
                     .timeout(Duration.ofSeconds(3)).GET().build();
             return client.send(request, HttpResponse.BodyHandlers.discarding()).statusCode() == 200;
         } catch (Exception ignored) { return false; }
+    }
+
+    public void inspectOnnx(String modelName) throws IOException, InterruptedException {
+        HttpRequest request = HttpRequest.newBuilder(URI.create(baseUrl + "/internal/yolo/inspect-onnx"))
+                .timeout(Duration.ofMinutes(2)).header("Content-Type", "application/json")
+                .header("X-SimpleLabel-Worker-Token", token)
+                .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(Map.of("model_name", modelName)), StandardCharsets.UTF_8)).build();
+        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            JsonNode body = mapper.readTree(response.body());
+            throw new IOException(body.path("error").asText("ONNX validation failed"));
+        }
     }
 }

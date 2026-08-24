@@ -10,7 +10,7 @@ if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
 from services.yolo_backend import create_detector, load_custom_names, run_detector
-from services.yolo_result_parser import parse_shapes_from_results
+from services.yolo_result_parser import parse_shapes_from_results, parse_detections_from_results
 
 
 DATA_DIR = os.path.abspath(os.environ.get('SIMPLELABEL_DATA_DIR', os.path.join(ROOT_DIR, 'data')))
@@ -113,6 +113,61 @@ def infer():
         return jsonify({'error': str(exc)}), 400
     except Exception as exc:
         return jsonify({'error': str(exc)}), 500
+
+
+@app.post('/internal/yolo/detect')
+def detect():
+    if not _require_token():
+        return jsonify({'error': 'Invalid worker token'}), 403
+    payload = request.get_json(silent=True) or {}
+    try:
+        model_name = payload.get('model_name')
+        model_path = _safe_model(model_name)
+        image_path = _safe_image(payload.get('image_path'))
+        confidence = float(payload.get('confidence', 0.25))
+        iou = float(payload.get('iou', 0.45))
+        if not 0 <= confidence <= 1 or not 0 <= iou <= 1:
+            raise ValueError('Confidence and IoU must be between 0 and 1')
+        key, detector, detector_lock = _detector(model_name, model_path, payload.get('backend', 'auto'), payload.get('custom_repo'))
+        with detector_lock:
+            if detector['backend'] == 'ultralytics':
+                results = detector['model'](image_path, conf=confidence, iou=iou, verbose=False,
+                                              device=detector.get('device', 'cpu'))
+            else:
+                try:
+                    detector['model'].conf = confidence
+                    detector['model'].iou = iou
+                except Exception:
+                    pass
+                results = detector['model'](image_path)
+            detections, width, height = parse_detections_from_results(
+                detector, results, custom_names=load_custom_names(MODELS_DIR, model_name))
+        return jsonify({'backend': detector['backend'], 'width': width, 'height': height,
+                        'detections': detections})
+    except FileNotFoundError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.post('/internal/yolo/inspect-onnx')
+def inspect_onnx():
+    if not _require_token():
+        return jsonify({'error': 'Invalid worker token'}), 403
+    try:
+        model_name = request.get_json(silent=True).get('model_name')
+        model_path = _safe_model(model_name)
+        if not model_name.lower().endswith('.onnx'):
+            raise ValueError('Only ONNX models can be inspected')
+        import onnx
+        onnx.checker.check_model(onnx.load(model_path))
+        return jsonify({'status': 'ok'})
+    except FileNotFoundError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except Exception as exc:
+        return jsonify({'error': 'Invalid ONNX model: ' + str(exc)}), 400
 
 
 if __name__ == '__main__':

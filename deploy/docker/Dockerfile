@@ -46,6 +46,7 @@ COPY backend-java/target/simplelabel-java-1.0.0-SNAPSHOT.jar backend-java/target
 COPY static static
 COPY services/__init__.py services/yolo_backend.py services/yolo_legacy_loader.py services/yolo_result_parser.py services/
 COPY yolo-worker yolo-worker
+COPY model-detection-python model-detection-python
 COPY yolov5 yolov5
 COPY deploy/ubuntu/validate_runtime_env.sh deploy/ubuntu/wait_for_worker.sh deploy/ubuntu/
 COPY deploy/docker/entrypoint.sh /usr/local/bin/simplelabel-entrypoint
@@ -55,6 +56,6 @@ RUN chmod 0755 \
         deploy/ubuntu/validate_runtime_env.sh \
         deploy/ubuntu/wait_for_worker.sh
 
-EXPOSE 18083
+EXPOSE 18083 8000 8001
 
 ENTRYPOINT ["/usr/local/bin/simplelabel-entrypoint"]

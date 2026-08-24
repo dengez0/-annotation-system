@@ -45,6 +45,10 @@
         .config-card.active { display:block; }
         .config-header { padding:11px 13px; font-weight:700; background:var(--bg-secondary); border-bottom:1px solid var(--border-color); }
         .config-body { padding:13px; }
+        .processing-option { display:flex; align-items:flex-start; gap:9px; padding:9px 0; color:var(--text-primary); font-size:13px; cursor:pointer; }
+        .processing-option + .processing-option { border-top:1px solid var(--border-color); }
+        .processing-option input { margin-top:2px; accent-color:var(--accent-blue); }
+        .processing-option small { display:block; margin-top:3px; color:var(--text-secondary); line-height:1.45; }
         .form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
         .field label { display:block; color:var(--text-secondary); font-size:12px; margin-bottom:5px; }
         .field input,.field select { width:100%; padding:8px 9px; color:var(--text-primary); background:var(--input-bg); border:1px solid var(--border-color); border-radius:4px; }
@@ -128,6 +132,15 @@
                 <p class="section-hint">点击工具加入任务；编号即组合任务的实际执行顺序。再次点击可移除。</p>
                 <div id="tool-list" class="tool-list"></div>
                 <div class="configuration">
+                    <div id="config-processing-options" class="config-card">
+                        <div class="config-header">处理选项</div>
+                        <div class="config-body">
+                            <label class="processing-option"><input id="overwrite-repair-json" type="checkbox">
+                                <span>覆盖原文件<small>仅适用于图片修复与 JSON 标签修改；未选择时，处理结果只保存在结果 ZIP 中。</small></span></label>
+                            <label class="processing-option"><input id="backup-original" type="checkbox">
+                                <span>备份原文件<small>适用于图片修复、JSON 标签修改与 mask 涂黑。备份存入 runtime/backups/processing（本地为 backups/processing）。</small></span></label>
+                        </div>
+                    </div>
                     <div id="config-json_labels" class="config-card">
                         <div class="config-header">JSON 标签修改规则</div>
                         <div class="config-body">
@@ -139,13 +152,13 @@
                         <div class="config-header">文件重命名设置</div>
                         <div class="config-body">
                             <div class="form-grid">
-                                <div class="field"><label>模式</label><select id="rename-mode" onchange="renderRenameFields()"><option value="sequence">编号模板</option><option value="pattern">前后缀 / 查找替换</option></select></div>
-                                <div class="field"><label>前缀</label><input id="rename-prefix" value="image_"></div>
+                                <div class="field"><label>模式</label><select id="rename-mode" onchange="renderRenameFields()"><option value="unique_timestamp">时间戳唯一编号</option><option value="sequence">编号模板</option><option value="pattern">前后缀 / 查找替换</option></select></div>
+                                <div class="field custom-rename-field" style="display:none"><label>前缀</label><input id="rename-prefix" value="image_"></div>
                                 <div class="field sequence-field"><label>起始编号</label><input id="rename-start" type="number" min="0" value="1"></div>
                                 <div class="field sequence-field"><label>补零位数</label><input id="rename-padding" type="number" min="1" max="12" value="6"></div>
                                 <div class="field pattern-field" style="display:none"><label>查找文本</label><input id="rename-find"></div>
                                 <div class="field pattern-field" style="display:none"><label>替换为</label><input id="rename-replace"></div>
-                                <div class="field"><label>后缀</label><input id="rename-suffix"></div>
+                                <div class="field custom-rename-field" style="display:none"><label>后缀</label><input id="rename-suffix"></div>
                             </div>
                             <div id="rename-preview" class="preview-list">选择数据后显示重命名预览。</div>
                         </div>
@@ -164,7 +177,7 @@
                 <h2 class="section-heading">任务流程</h2>
                 <p class="section-hint">支持单项运行，也支持多项组合。</p>
                 <div id="pipeline-list" class="pipeline-list"></div>
-                <div class="order-warning">组合任务严格按点击顺序执行。标签修改、mask 和 YOLO 的先后顺序可能改变最终结果。</div>
+                <div class="order-warning">组合任务按选择顺序执行，但 YOLO 始终最后导出。mask 涂黑会同步移除 JSON 中的 mask 标注；重命名与 mask 默认回写原任务。</div>
                 <button id="run-btn" class="primary-btn run-btn" onclick="startTask()" disabled>开始处理</button>
                 <div id="task-box" class="task-box">
                     <div class="task-row"><span id="task-stage">准备中</span><span id="task-progress-text">0 / 0</span></div>
@@ -177,7 +190,7 @@
 
         <section class="dp-panel results-panel">
             <h2 class="section-heading">处理结果</h2>
-            <p class="section-hint">结果保存在 runtime/processed；下载与删除仅已激活管理员令牌的设备可用。YOLO 转换结果下载为完整数据副本，包含图片、JSON 和 TXT。</p>
+            <p class="section-hint">结果保存在 runtime/processed，并在全部步骤成功后整体写回原任务；下载与删除仅已激活管理员令牌的设备可用。</p>
             <div id="results-list"><div class="pipeline-empty">暂无处理结果</div></div>
         </section>
     </section>
@@ -197,16 +210,21 @@
     const IS_ADMIN = /*[[${isAdmin}]]*/ false;
     const TOOLS = [
         {type:'image_repair', name:'图片修复', description:'容错读取、校正 EXIF 方向、统一 RGB 并重新编码。'},
-        {type:'mask_blackout', name:'mask 涂黑', description:'将 JSON 中 label=mask 的多边形或矩形区域涂黑，保留原 JSON。'},
-        {type:'json_labels', name:'JSON 标签修改', description:'支持标签改名、多个标签合并，以及删除指定标签。'},
-        {type:'file_rename', name:'文件重命名', description:'按编号模板或文本规则同步重命名图片与 JSON/TXT。'},
-        {type:'yolo_export', name:'YOLO 格式转换', description:'生成 TXT 和 classes.txt；下载结果时同时包含图片与原始 JSON。'}
+        {type:'mask_blackout', name:'mask 涂黑', description:'涂黑 label=mask 的区域；开始前可备份，成功后写回原任务。'},
+        {type:'json_labels', name:'JSON 标签修改', description:'支持标签改名、合并和删除，成功后覆盖原任务中的 JSON。'},
+        {type:'file_rename', name:'文件重命名', description:'默认按秒级时间戳、任务哈希和序号同步重命名图片与 JSON/TXT。'},
+        {type:'yolo_export', name:'YOLO 格式转换', description:'生成坐标保留 16 位小数的 TXT 和 classes.txt；下载结果时同时包含图片与原始 JSON。'}
     ];
     let projects = [];
     let source = null;
     let selectedOrder = [];
     let currentTask = null;
     let pollTimer = null;
+
+    function effectiveOrder(){
+        return [...selectedOrder.filter(type=>type!=='yolo_export'), ...selectedOrder.filter(type=>type==='yolo_export')];
+    }
+    function hasSelected(...types){ return selectedOrder.some(type=>types.includes(type)); }
 
     function apiPath(value){ return encodeURIComponent(value); }
     function formatBytes(value){
@@ -217,15 +235,21 @@
     function escapeHtml(value){ const node=document.createElement('span');node.textContent=String(value);return node.innerHTML; }
 
     function renderTools(){
+        const ordered=effectiveOrder();
         document.getElementById('tool-list').innerHTML=TOOLS.map(tool=>{
-            const order=selectedOrder.indexOf(tool.type);
+            const order=ordered.indexOf(tool.type);
             return `<article class="tool-card ${order>=0?'selected':''}" onclick="toggleTool('${tool.type}')">
                 <span class="tool-order">${order+1}</span><div class="tool-name">${tool.name}</div><div class="tool-description">${tool.description}</div></article>`;
         }).join('');
         document.querySelectorAll('.config-card').forEach(node=>node.classList.remove('active'));
         selectedOrder.forEach(type=>document.getElementById('config-'+type)?.classList.add('active'));
+        const supportsOverwrite=hasSelected('image_repair','json_labels');
+        const supportsBackup=hasSelected('image_repair','json_labels','mask_blackout');
+        document.getElementById('config-processing-options').classList.toggle('active',supportsOverwrite||supportsBackup);
+        document.getElementById('overwrite-repair-json').disabled=!supportsOverwrite;
+        document.getElementById('backup-original').disabled=!supportsBackup;
         const pipeline=document.getElementById('pipeline-list');
-        pipeline.innerHTML=selectedOrder.length?selectedOrder.map((type,index)=>{
+        pipeline.innerHTML=ordered.length?ordered.map((type,index)=>{
             const tool=TOOLS.find(item=>item.type===type);
             return `<div class="pipeline-step"><span class="step-index">${index+1}</span><span>${tool.name}</span></div>`;
         }).join(''):'<div class="pipeline-empty">尚未选择处理工具</div>';
@@ -315,9 +339,10 @@
         return [...document.querySelectorAll('.rule-row')].map(row=>({from:row.querySelector('.rule-from').value.trim(),to:row.querySelector('.rule-to').value.trim(),delete:row.querySelector('.rule-delete').checked}));
     }
     function renderRenameFields(){
-        const sequence=document.getElementById('rename-mode').value==='sequence';
+        const mode=document.getElementById('rename-mode').value,sequence=mode==='sequence',pattern=mode==='pattern';
         document.querySelectorAll('.sequence-field').forEach(node=>node.style.display=sequence?'block':'none');
-        document.querySelectorAll('.pattern-field').forEach(node=>node.style.display=sequence?'none':'block');
+        document.querySelectorAll('.pattern-field').forEach(node=>node.style.display=pattern?'block':'none');
+        document.querySelectorAll('.custom-rename-field').forEach(node=>node.style.display=(sequence||pattern)?'block':'none');
         if(sequence&&document.getElementById('rename-prefix').value==='')document.getElementById('rename-prefix').value='image_';
         renderRenamePreview();
     }
@@ -327,7 +352,8 @@
         const config=renameConfig(),samples=source.sample_images||[];
         document.getElementById('rename-preview').textContent=samples.slice(0,5).map((name,index)=>{
             const slash=name.lastIndexOf('/'),dir=slash>=0?name.slice(0,slash+1):'',file=slash>=0?name.slice(slash+1):name,dot=file.lastIndexOf('.'),stem=dot>=0?file.slice(0,dot):file,ext=dot>=0?file.slice(dot):'';
-            let next;if(config.mode==='sequence')next=config.prefix+String(config.start+index).padStart(config.padding,'0')+config.suffix+ext;
+            let next;if(config.mode==='unique_timestamp')next=`img_YYYYMMDD_HHMMSS_${source.task_hash||'taskhash'}_${String(index+1).padStart(8,'0')}${ext}`;
+            else if(config.mode==='sequence')next=config.prefix+String(config.start+index).padStart(config.padding,'0')+config.suffix+ext;
             else next=config.prefix+(config.find?stem.split(config.find).join(config.replace):stem)+config.suffix+ext;
             return `${name}  →  ${dir}${next}`;
         }).join('\n')||'目录中没有图片。';
@@ -335,7 +361,7 @@
     ['rename-prefix','rename-suffix','rename-find','rename-replace','rename-start','rename-padding'].forEach(id=>document.getElementById(id).addEventListener('input',renderRenamePreview));
 
     function buildOperations(){
-        return selectedOrder.map(type=>{
+        return effectiveOrder().map(type=>{
             if(type==='json_labels')return {type,rules:collectRules()};
             if(type==='file_rename')return renameConfig();
             if(type==='yolo_export')return {type,labels:document.getElementById('yolo-labels').value.split(',').map(item=>item.trim()).filter(Boolean)};
@@ -346,11 +372,26 @@
         if(!source||!selectedOrder.length)return;
         const operations=buildOperations();
         const names=operations.map(item=>TOOLS.find(tool=>tool.type===item.type).name).join(' → ');
-        if(!confirm(`确认开始处理？\n\n数据源：${source.main} / ${source.sub}\n执行顺序：${names}\n\n源数据不会被修改。`))return;
+        const hasOverwrite=operations.some(item=>item.type==='image_repair'||item.type==='json_labels');
+        const hasBackup=operations.some(item=>item.type==='image_repair'||item.type==='json_labels'||item.type==='mask_blackout');
+        let overwriteRepairJson=hasOverwrite&&document.getElementById('overwrite-repair-json').checked;
+        let backupOriginal=hasBackup&&document.getElementById('backup-original').checked;
+        if(hasOverwrite&&!overwriteRepairJson){
+            overwriteRepairJson=confirm('本次包含图片修复或 JSON 标签修改。是否覆盖原文件？\n\n确定：成功后写回原文件；取消：仅保留处理结果。');
+        }
+        if(hasBackup&&!backupOriginal){
+            backupOriginal=confirm('是否先备份原文件？\n\n确定：创建完整备份；取消：不创建备份。\n备份位置：runtime/backups/processing（本地为 backups/processing）。');
+        }
+        const writeback=[];
+        if(overwriteRepairJson)writeback.push('图片修复 / JSON 标签修改');
+        if(operations.some(item=>item.type==='mask_blackout'))writeback.push('mask 涂黑（含清除 mask JSON）');
+        if(operations.some(item=>item.type==='file_rename'))writeback.push('文件重命名');
+        const writebackText=writeback.length?writeback.join('、'):'不写回原文件';
+        if(!confirm(`确认开始处理？\n\n数据源：${source.main} / ${source.sub}\n执行顺序：${names}\n源数据：${writebackText}\n备份：${backupOriginal?'创建完整备份':'不创建备份'}\n\nYOLO 仅写入结果 ZIP。`))return;
         try{
-            const response=await fetch('/api/data-processing/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({main:source.main,sub:source.sub,operations})});
+            const response=await fetch('/api/data-processing/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({main:source.main,sub:source.sub,operations,backup_original:backupOriginal,overwrite_repair_json:overwriteRepairJson})});
             const data=await response.json();if(!response.ok)throw new Error(data.error||'任务启动失败');
-            currentTask=data.task_id;document.getElementById('task-box').classList.add('active');document.getElementById('cancel-btn').style.display='inline-block';document.getElementById('task-message').textContent='任务已提交，正在准备完整副本。';renderTools();pollTask();
+            currentTask=data.task_id;document.getElementById('task-box').classList.add('active');document.getElementById('cancel-btn').style.display='inline-block';document.getElementById('task-message').textContent=backupOriginal?'任务已提交，正在备份并准备工作副本。':'任务已提交，正在准备工作副本。';renderTools();pollTask();
         }catch(error){alert(error.message);}
     }
     async function pollTask(){
@@ -390,7 +431,7 @@
         if(!confirm(`确认永久删除处理结果 ${id}？源数据不会受到影响。`))return;
         const response=await fetch(`/api/data-processing/results/${apiPath(source.main)}/${apiPath(source.sub)}/${apiPath(id)}`,{method:'DELETE'});const data=await response.json();if(!response.ok)return alert(data.error||'删除失败');loadResults();
     }
-    renderTools();
+    renderTools();renderRenameFields();
 </script>
 </body>
 </html>

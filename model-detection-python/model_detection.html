@@ -1,0 +1,1393 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YOLO 实时目标检测</title>
+    <!-- 引入 Element-UI -->
+    <link rel="stylesheet" href="asset/element-ui.css">
+    <style>
+        /* 全局样式和基础布局 */
+        html, body, #app, .el-container {
+            height: 100%;
+            margin: 0; padding: 0;
+            font-family: "Helvetica Neue",Helvetica,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","微软雅黑",Arial,sans-serif;
+            overflow: hidden;
+        }
+        .el-header {
+            background-color: #ffffff; color: #333;
+            border-bottom: 1px solid #e6e6e6; display: flex;
+            align-items: center; padding: 10px 20px !important;
+            height: auto !important; min-height: 60px; box-sizing: border-box;
+        }
+        .header-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 20px; width: 100%; }
+        .control-item { display: flex; align-items: center; gap: 8px; font-size: 14px; white-space: nowrap; }
+        .control-item .el-slider, .control-item .el-select { width: 160px; }
+        .el-aside { color: #333; background-color: #FFF; border-right: 1px solid #e6e6e6; }
+        .el-menu { border-right: none !important; }
+        .el-main { background-color: #f4f5f7; padding: 20px; overflow-y: auto; }
+        .display-card { height: 100%; display: flex; flex-direction: column; }
+        .el-card__body { flex-grow: 1; display: flex; justify-content: center; align-items: center; padding: 10px !important; height: calc(100% - 60px); }
+        .canvas-container, .video-container { width: 100%; height: 100%; position: relative; display: flex; align-items: center; justify-content: center; background-color: #e9eef3; border-radius: 4px; }
+        .placeholder-text { color: #909399; }
+        canvas, video, .detected-video-frame { display: block; max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 4px; }
+        .upload-container { text-align: center; margin-top: 20px; }
+        .preview-dialog .el-dialog__body { overflow: hidden; padding: 0 !important; max-height: 80vh; }
+        .compare-container { display: flex; width: 100%; height: 78vh; }
+        .compare-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid #e6e6e6; }
+        .compare-panel:last-child { border-right: none; }
+        .compare-panel-title { text-align: center; padding: 8px 0; font-size: 13px; font-weight: 600; color: #606266; background: #f5f7fa; border-bottom: 1px solid #e6e6e6; flex-shrink: 0; }
+        .compare-panel-body { flex: 1; overflow: hidden; position: relative; background: #1a1a2e; display: flex; align-items: center; justify-content: center; cursor: grab; }
+        .compare-panel-body.grabbing { cursor: grabbing; }
+        .compare-img { max-width: 100%; max-height: 100%; object-fit: contain; user-select: none; pointer-events: none; transform-origin: center center; transition: transform 0.05s linear; }
+        
+        /* 切换图片按钮样式 */
+        .nav-btn {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            background-color: rgba(0,0,0,0.4);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            font-size: 24px;
+            cursor: pointer;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background-color 0.3s;
+        }
+        .nav-btn:hover {
+            background-color: rgba(0,0,0,0.8);
+        }
+        .nav-btn-prev { left: 20px; }
+        .nav-btn-next { right: 20px; }
+
+        /* 批量图片网格样式 */
+        .image-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+            padding: 20px;
+        }
+        .image-item {
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            transition: transform 0.2s;
+        }
+        .image-item:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        .image-item img {
+            width: 100%;
+            height: 200px;
+            object-fit: cover;
+            display: block;
+        }
+        .image-item .image-info {
+            padding: 12px;
+            border-top: 1px solid #eee;
+        }
+        .image-item .image-name {
+            font-size: 14px;
+            color: #333;
+            margin-bottom: 4px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .image-item .image-status {
+            font-size: 12px;
+            color: #909399;
+        }
+        .image-item .image-status.success {
+            color: #67c23a;
+        }
+        .image-item .image-status.error {
+            color: #f56c6c;
+        }
+
+        /* 交互式检测框样式 */
+        .box-container {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+        }
+        .detection-box {
+            position: absolute;
+            cursor: pointer;
+            pointer-events: auto;
+            transition: opacity 0.2s, box-shadow 0.2s;
+            box-sizing: border-box;
+            background-color: rgba(255,255,255, 0.001); 
+        }
+        .detection-box:hover {
+            box-shadow: 0 0 8px rgba(255,255,255,0.8);
+        }
+        .detection-box.box-transparent {
+            opacity: 0.3 !important;
+        }
+        .box-label-text {
+            position: absolute;
+            top: -24px;
+            left: -2px;
+            color: white;
+            padding: 3px 6px;
+            font-size: 13px;
+            line-height: 1;
+            white-space: nowrap;
+            border-radius: 4px;
+            user-select: none;
+            z-index: 2;
+        }
+        
+        /* 统计侧边栏样式 */
+        .stats-panel {
+            width: 160px;
+            background: #111120;
+            color: #fff;
+            padding: 15px;
+            font-size: 13px;
+            border-right: 1px solid #000;
+            overflow-y: auto;
+            flex-shrink: 0;
+            z-index: 10;
+        }
+        .stats-panel h4 { margin: 0 0 10px 0; font-size: 14px; color: #ccc; border-bottom: 1px solid #333; padding-bottom: 8px; font-weight: bold; }
+        .stats-item { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px; }
+        .stats-color-dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; vertical-align: middle; position: relative; top: -1px;}
+
+        /* 右键菜单样式 */
+        .context-menu {
+            position: fixed;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-shadow: 2px 2px 5px rgba(0,0,0,0.2);
+            z-index: 2000;
+            padding: 5px 0;
+            min-width: 120px;
+        }
+        .context-menu-item {
+            padding: 8px 15px;
+            cursor: pointer;
+            font-size: 14px;
+            color: #333;
+        }
+        .context-menu-item:hover {
+            background-color: #f5f7fa;
+            color: #409EFF;
+        }
+
+        /* 非阻塞浮动进度条 */
+        .floating-progress {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            z-index: 1999;
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+            padding: 16px 20px;
+            min-width: 320px;
+            max-width: 420px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            animation: slideInUp 0.3s ease-out;
+        }
+        @keyframes slideInUp {
+            from { transform: translateY(30px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        .floating-progress .fp-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            color: #303133;
+        }
+        .floating-progress .fp-header i {
+            color: #409EFF;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        .floating-progress .fp-stats {
+            display: flex;
+            gap: 8px;
+            font-size: 12px;
+        }
+
+        /* 侧边栏结果样式 */
+        .labeled-item {
+            padding: 8px;
+            border-bottom: 1px solid #eee;
+            font-size: 13px;
+        }
+        .labeled-tag {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 4px;
+            color: white;
+            font-size: 12px;
+            margin-bottom: 4px;
+        }
+        .tag-error { background-color: #F56C6C; }
+        .tag-missed { background-color: #E6A23C; }
+        .tag-correct { background-color: #67C23A; }
+        .labeled-name {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            color: #606266;
+        }
+    </style>
+</head>
+<body>
+
+<button onclick="window.location.href='http://'+location.hostname+':' +(location.port==='8001'?'18084':'18083')+'/'" style="position:fixed;top:16px;right:18px;z-index:9999;padding:8px 16px;border:1px solid #409EFF;border-radius:4px;background:#fff;color:#409EFF;cursor:pointer;font-size:14px;">返回首页</button>
+
+<div id="app" @click="closeContextMenu">
+    <el-container>
+        <!-- 侧边栏 -->
+        <el-aside width="200px" style="display: flex; flex-direction: column;">
+             <el-menu :default-active="activeMenu" @select="handleMenuSelect">
+                <el-menu-item index="image">
+                    <i class="el-icon-picture"></i><span slot="title">图片预测</span>
+                </el-menu-item>
+                <el-menu-item index="video">
+                    <i class="el-icon-video-camera-solid"></i><span slot="title">视频预测</span>
+                </el-menu-item>
+            </el-menu>
+
+            <!-- 检测结果反馈列表 -->
+            <div class="detection-results-panel" style="flex: 1; overflow-y: auto; border-top: 1px solid #e6e6e6; padding: 10px;">
+                <div style="font-weight: bold; margin-bottom: 10px; color: #303133; display: flex; justify-content: space-between; align-items: center;">
+                    <span>检测结果反馈</span>
+                    <el-button type="text" size="mini" @click="clearLabeledResults" v-if="labeledResults.length > 0">清空</el-button>
+                </div>
+                <!-- 统计信息 -->
+                <div v-if="labeledResults.length > 0" style="font-size: 12px; margin-bottom: 10px; display: flex; gap: 8px; flex-wrap: wrap;">
+                    <el-tag size="mini" type="success">正确: {{ labeledStats.correct }}</el-tag>
+                    <el-tag size="mini" type="warning">疏漏: {{ labeledStats.missed }}</el-tag>
+                    <el-tag size="mini" type="danger">错误: {{ labeledStats.error }}</el-tag>
+                </div>
+                <div v-if="labeledResults.length === 0" style="color: #909399; font-size: 12px; text-align: center; margin-top: 20px;">
+                    暂无反馈记录
+                </div>
+                <div v-for="(item, index) in labeledResults" :key="index" class="labeled-item" @click="scrollToImage(item.name)" style="cursor: pointer;">
+                    <div class="labeled-tag" :class="item.tagClass">{{ item.type }}</div>
+                    <div class="labeled-name" :title="item.name">{{ item.name }}</div>
+                </div>
+            </div>
+        </el-aside>
+
+        <el-container direction="vertical">
+            <!-- 顶部栏 -->
+            <el-header>
+                <div class="header-controls">
+                    <div class="control-item">
+                        <span>选择模型:</span>
+                        <el-select v-model="selectedModel" placeholder="请选择模型" :disabled="isDetectingVideo" @focus="loadModels">
+                            <el-option v-for="model in availableModels" :key="model" :label="model" :value="model"></el-option>
+                        </el-select>
+                        <el-upload action="#" :show-file-list="false" :http-request="handleModelUpload" accept=".pt,.onnx" :disabled="isDetectingVideo">
+                            <el-button size="small" icon="el-icon-upload" :disabled="isDetectingVideo">上传模型</el-button>
+                        </el-upload>
+                    </div>
+                    <div class="control-item"><span>置信度:</span><el-slider v-model="confidence" :disabled="isDetectingVideo"></el-slider></div>
+                    <div class="control-item"><span>IoU阈值:</span><el-slider v-model="iou" :disabled="isDetectingVideo"></el-slider></div>
+                    <div class="control-item"><span>线框粗细:</span><el-slider v-model="lineWidth" :min="1" :max="10" :disabled="isDetectingVideo"></el-slider></div>
+                    <div class="control-item"><span>距离追踪:</span><el-switch v-model="enableDistanceTracking" :disabled="isDetectingVideo"></el-switch></div>
+                    <div class="control-item"><span>Resize 640x360:</span><el-switch v-model="enableResize" :disabled="isDetectingVideo"></el-switch></div>
+                    <div class="control-item"><span>图片采集:</span><el-switch v-model="enableImageCollection" :disabled="isDetectingVideo"></el-switch></div>
+                </div>
+            </el-header>
+
+            <!-- 主内容区 -->
+            <el-main>
+                <!-- 图片预测界面 -->
+                <div v-if="activeMenu === 'image'" style="height: 100%;">
+                    <div class="upload-container" style="margin-bottom: 20px;">
+                        <input type="file" ref="imageInput" @change="handleImageFileSelect" accept="image/*" multiple style="display: none;">
+                        <el-button type="primary" icon="el-icon-upload" @click="triggerImageUpload" :disabled="isBatchDetecting">选择图片并检测</el-button>
+                        <el-button @click="clearImages" icon="el-icon-delete" :disabled="imageResults.length === 0 || isBatchDetecting">清空所有图片</el-button>
+                    </div>
+                    <div v-if="isBatchDetecting || batchStats.total > 0" style="display: flex; justify-content: center; margin-bottom: 20px;">
+                        <div style="width: 100%; max-width: 900px; display: flex; align-items: center; gap: 12px;">
+                            <div style="flex: 1; min-width: 320px;">
+                                <el-progress :percentage="batchStats.progress_percent" :format="() => `已检测 ${batchStats.processed}/${batchStats.total}`" :stroke-width="18" text-inside></el-progress>
+                            </div>
+                            <div style="font-size: 12px; color: #606266; display: flex; gap: 8px; flex-wrap: nowrap; white-space: nowrap;">
+                                <el-tag size="mini">有结果 {{ batchStats.with_results }}</el-tag>
+                                <el-tag size="mini" type="info">无结果 {{ batchStats.without_results }}</el-tag>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div v-if="imageResults.length > 0" class="image-grid">
+                        <div v-for="(item, index) in imageResults" :key="index" :id="'img-' + item.name.replace(/[^\w\u4e00-\u9fa5]/g, '')" class="image-item" @click="handlePreview(item)" @contextmenu.prevent="showContextMenu($event, item)">
+                            <img :src="item.result" :alt="item.name">
+                            <div class="image-info">
+                                <div class="image-name" :title="item.name">{{ item.name }}</div>
+                                <div class="image-status" :class="item.status">
+                                    {{ item.status === 'success' ? '检测完成' : '检测失败' }}
+                                </div>
+                                <div class="image-status" v-if="item.status === 'success'">
+                                    检测目标数: {{ item.detectionCount || 0 }}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div v-if="imageResults.length === 0" class="placeholder-text" style="text-align: center; margin-top: 100px;">
+                        请上传图片进行批量检测
+                    </div>
+                </div>
+
+                <!-- 视频预测界面 -->
+                <div v-if="activeMenu === 'video'" style="height: 100%;">
+                    <el-row :gutter="20" style="height: calc(100% - 80px);">
+                        <el-col :xs="24" :sm="24" :md="12" style="height: 100%;">
+                             <el-card class="display-card" shadow="never">
+                                <div slot="header"><span>原始视频 (同步播放)</span></div>
+                                <div class="video-container">
+                                    <video ref="sourceVideo" @loadedmetadata="onVideoLoaded" @seeked="onVideoSeeked" playsinline style="background-color: black;"></video>
+                                    <span class="placeholder-text" v-if="!originalVideoUrl">请选择视频文件</span>
+                                </div>
+                            </el-card>
+                        </el-col>
+                        <el-col :xs="24" :sm="24" :md="12" style="height: 100%;">
+                            <el-card class="display-card" shadow="never">
+                                <div slot="header">
+                                    <span>实时检测结果 </span>
+                                    <el-tag size="mini" :type="socketStatus === 'connected' ? 'success' : 'danger'">{{ socketStatusText }}</el-tag>
+                                </div>
+                                <div class="video-container">
+                                    <img ref="detectedFrame" class="detected-video-frame" v-if="detectedVideoFrameUrl" :src="detectedVideoFrameUrl" />
+                                    <span class="placeholder-text" v-if="!detectedVideoFrameUrl">等待检测开始...</span>
+                                </div>
+                            </el-card>
+                        </el-col>
+                    </el-row>
+                    <div class="upload-container">
+                        <input type="file" ref="videoInput" @change="handleVideoFileSelect" accept="video/*" style="display: none;">
+                        <el-button type="primary" icon="el-icon-folder-opened" @click="triggerVideoUpload">选择视频文件</el-button>
+                        <el-button :type="isDetectingVideo && !isPaused ? 'warning' : 'success'" :icon="isDetectingVideo && !isPaused ? 'el-icon-video-pause' : 'el-icon-video-play'" @click="toggleVideoDetection" :disabled="!originalVideoUrl">
+                            {{ buttonText }}
+                        </el-button>
+                        <el-button type="danger" icon="el-icon-switch-button" @click="stopVideoDetection" :disabled="!originalVideoUrl">停止检测</el-button>
+                    </div>
+                    <!-- 用于抓取帧的隐藏Canvas -->
+                    <canvas ref="frameCanvas" style="display: none;"></canvas>
+                </div>
+            </el-main>
+        </el-container>
+    </el-container>
+    <!-- 图片预览弹窗 -->
+    <el-dialog :visible.sync="dialogVisible" width="90%" custom-class="preview-dialog" @closed="resetPreview" :title="currentPreviewItem ? currentPreviewItem.name : '图片对比'">
+        <div class="compare-container" style="position: relative;">
+            <!-- 切换上一张/下一张按钮 -->
+            <button class="nav-btn nav-btn-prev" @click="prevImage" v-if="hasPrevImage"><i class="el-icon-arrow-left"></i></button>
+            <button class="nav-btn nav-btn-next" @click="nextImage" v-if="hasNextImage"><i class="el-icon-arrow-right"></i></button>
+            <!-- 左：原始图片 -->
+            <div class="compare-panel">
+                <div class="compare-panel-title">原始图片</div>
+                <div style="display: flex; flex: 1; overflow: hidden;">
+                    <!-- 统计侧边栏 -->
+                    <div class="stats-panel" v-if="currentRawBoxes && currentRawBoxes.length > 0">
+                        <h4>标签统计 (共{{ currentRawBoxes.length }}个)</h4>
+                        <div v-for="(count, name) in labelStats" :key="name" class="stats-item">
+                            <span><span class="stats-color-dot" :style="{ backgroundColor: getBoxColorByName(name) }"></span>{{ name }}</span>
+                            <span>{{ count }}个</span>
+                        </div>
+                    </div>
+                    
+                    <div class="compare-panel-body" ref="leftPanel"
+                        @mousedown="startPan($event, 'left')"
+                        @mousemove="panImage($event, 'left')"
+                        @mouseup="endPan('left')"
+                        @mouseleave="endPan('left')"
+                        @wheel.prevent="zoomImage($event, 'left')">
+                        <img v-if="previewOriginalUrl" :src="previewOriginalUrl" ref="previewLeft" class="compare-img">
+                        <span v-else style="color:#666">暂无原始图片</span>
+                    </div>
+                </div>
+            </div>
+            <!-- 右：检测结果 -->
+            <div class="compare-panel">
+                <div class="compare-panel-title">检测结果</div>
+                <div class="compare-panel-body" ref="rightPanel"
+                    @mousedown="startPan($event, 'right')"
+                    @mousemove="panImage($event, 'right')"
+                    @mouseup="endPan('right')"
+                    @mouseleave="endPan('right')"
+                    @wheel.prevent="zoomImage($event, 'right')">
+                    
+                    <div v-if="previewOriginalUrl" ref="previewRight" :style="wrapperStyle" @contextmenu.prevent="showContextMenu($event, currentPreviewItem)">
+                        <img :src="previewOriginalUrl" style="width: 100%; height: 100%; display: block; border-radius: 4px; pointer-events: none; user-select: none;">
+                        <div class="box-container">
+                            <div v-for="(box, i) in currentRawBoxes" :key="i"
+                                 class="detection-box"
+                                 :class="{ 'box-transparent': box.transparent }"
+                                 :style="getBoxStyle(box)"
+                                 title="点击切换透明状态"
+                                 @click.stop="toggleBoxTransparency(box)">
+                                 <div class="box-label-text" :style="{ backgroundColor: getBoxColor(box.class_id) }">{{ box.class_name }} {{ (box.conf*100).toFixed(0) }}%</div>
+                            </div>
+                        </div>
+                    </div>
+                    <span v-else style="color:#666">暂无检测结果</span>
+                </div>
+            </div>
+        </div>
+    </el-dialog>
+
+    <!-- 非阻塞浮动进度条 -->
+    <div v-if="isBatchDetecting" class="floating-progress">
+        <div class="fp-header">
+            <i class="el-icon-loading"></i>
+            <span>{{ floatingProgressText }}</span>
+        </div>
+        <el-progress :percentage="batchStats.progress_percent" :stroke-width="10" :format="() => `${batchStats.processed}/${batchStats.total}`"></el-progress>
+        <div class="fp-stats">
+            <el-tag size="mini">有结果 {{ batchStats.with_results }}</el-tag>
+            <el-tag size="mini" type="info">无结果 {{ batchStats.without_results }}</el-tag>
+        </div>
+    </div>
+
+    <!-- 右键菜单 -->
+    <div v-show="contextMenuVisible" class="context-menu" :style="{ top: contextMenuPosition.top + 'px', left: contextMenuPosition.left + 'px' }" @click.stop>
+        <div class="context-menu-item" @click="handleLabel('错误检测', 'tag-error')">错误检测</div>
+        <div class="context-menu-item" @click="handleLabel('疏漏检测', 'tag-missed')">疏漏检测</div>
+        <div class="context-menu-item" @click="handleLabel('正确检测', 'tag-correct')">正确检测</div>
+    </div>
+</div>
+
+<script src="asset/vue.js"></script>
+<script src="asset/unpkg.com_element-ui@2.15.14_lib_index.js"></script>
+
+<script>
+new Vue({
+    el: '#app',
+    data() {
+        return {
+            apiBaseUrl: window.location.origin,
+            wsBaseUrl: `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`,
+            activeMenu: 'image',
+            selectedModel: '',
+            availableModels: [],
+            confidence: 50, iou: 45, lineWidth: 3,
+            imageResults: [],
+            uploadedFiles: [],
+            socket: null,
+            socketStatus: 'disconnected',
+            isBatchDetecting: false,
+            isDetectingVideo: false,
+            isPaused: true,
+            originalVideoUrl: '',
+            detectedVideoFrameUrl: '',
+            animationFrameId: null,
+            isSeeking: false,
+            enableDistanceTracking: true,
+            enableResize: false,
+            enableImageCollection: false,
+            trackingData: [],
+            distanceLog: [],
+            lastDistanceLogTime: 0,
+            dialogVisible: false,
+            previewImageUrl: '',
+            previewOriginalUrl: '',
+            currentPreviewItem: null,
+            currentRawBoxes: [],
+            currentImageDims: {w: 0, h: 0},
+            boxColors: [
+                '#EF6262', '#6BCB77', '#66A8F2', '#FFC06A',
+                '#9E77E8', '#6FE0DE', '#FF88C7', '#E3A989'
+            ],
+            panState: {
+                left:  { isPanning: false, startX: 0, startY: 0, translateX: 0, translateY: 0, scale: 1 },
+                right: { isPanning: false, startX: 0, startY: 0, translateX: 0, translateY: 0, scale: 1 }
+            },
+            
+            // 右键菜单相关
+            labeledResults: [],
+            contextMenuVisible: false,
+            contextMenuPosition: { top: 0, left: 0 },
+            currentRightClickedImage: null,
+            batchStats: { total: 0, processed: 0, with_results: 0, without_results: 0, progress_percent: 0 },
+            floatingProgressText: '正在检测中...',
+            
+            // 重检防抖与并发控制
+            _reDetectTimer: null,
+            _reDetectGeneration: 0,
+        };
+    },
+    computed: {
+        currentPreviewIndex() {
+            if (!this.currentPreviewItem) return -1;
+            return this.imageResults.findIndex(img => img.name === this.currentPreviewItem.name);
+        },
+        hasPrevImage() {
+            return this.currentPreviewIndex > 0;
+        },
+        hasNextImage() {
+            return this.currentPreviewIndex >= 0 && this.currentPreviewIndex < this.imageResults.length - 1;
+        },
+        wrapperStyle() {
+            if (!this.currentImageDims || this.currentImageDims.w === 0) return {};
+            return {
+                position: 'relative',
+                aspectRatio: `${this.currentImageDims.w} / ${this.currentImageDims.h}`,
+                maxWidth: '100%',
+                maxHeight: '100%',
+                transformOrigin: 'center center',
+                transition: 'transform 0.05s linear',
+                margin: '0 auto'
+            };
+        },
+        labelStats() {
+            if (!this.currentRawBoxes) return {};
+            const stats = {};
+            this.currentRawBoxes.forEach(b => {
+                stats[b.class_name] = (stats[b.class_name] || 0) + 1;
+            });
+            return stats;
+        },
+        socketStatusText() {
+            const statusMap = {
+                connecting: '连接中...',
+                connected: '已连接',
+                disconnected: '已断开',
+                error: '连接错误'
+            };
+            return statusMap[this.socketStatus];
+        },
+        buttonText() {
+            if (!this.isDetectingVideo) return '开始检测';
+            if (this.isPaused) return '继续检测';
+            return '暂停检测';
+        },
+        labeledStats() {
+            const stats = { correct: 0, missed: 0, error: 0 };
+            this.labeledResults.forEach(item => {
+                if (item.type === '正确检测') stats.correct++;
+                else if (item.type === '疏漏检测') stats.missed++;
+                else if (item.type === '错误检测') stats.error++;
+            });
+            return stats;
+        }
+    },
+    watch: {
+        confidence(newVal, oldVal) {
+            if (oldVal !== undefined && newVal !== oldVal && this.uploadedFiles.length > 0) {
+                this.debouncedReDetect();
+            }
+        },
+        iou(newVal, oldVal) {
+            if (oldVal !== undefined && newVal !== oldVal && this.uploadedFiles.length > 0) {
+                this.debouncedReDetect();
+            }
+        },
+        lineWidth(newVal, oldVal) {
+            if (oldVal !== undefined && newVal !== oldVal && this.uploadedFiles.length > 0) {
+                this.debouncedReDetect();
+            }
+        }
+    },
+    mounted() {
+        this.loadModels();
+    },
+    methods: {
+        // 防抖: 滑动条停下 400ms 后才触发重新检测
+        debouncedReDetect() {
+            if (this._reDetectTimer) clearTimeout(this._reDetectTimer);
+            this._reDetectTimer = setTimeout(() => {
+                this.reDetectImages();
+            }, 400);
+        },
+
+        resetBatchStats(total = 0) {
+            this.batchStats = {
+                total,
+                processed: 0,
+                with_results: 0,
+                without_results: 0,
+                progress_percent: total > 0 ? 0 : 0
+            };
+        },
+        applyBatchResponseStats(batchData) {
+            if (!batchData) return;
+            const batchTotal = Number(batchData.total || 0);
+            const batchProcessed = Number(batchData.processed || 0);
+            const counts = Array.isArray(batchData.detection_counts) ? batchData.detection_counts : [];
+            const withResults = counts.filter(c => Number(c) > 0).length;
+            const withoutResults = Math.max(batchProcessed - withResults, 0);
+            this.batchStats.total = Math.max(this.batchStats.total, this.batchStats.processed + batchTotal);
+            this.batchStats.processed += batchProcessed;
+            this.batchStats.with_results += withResults;
+            this.batchStats.without_results += withoutResults;
+            this.batchStats.progress_percent = this.batchStats.total > 0 ? Math.min(100, Math.round((this.batchStats.processed / this.batchStats.total) * 100)) : 0;
+        },
+        handleMenuSelect(index) {
+            if (this.socket) this.stopVideoDetection();
+            this.activeMenu = index;
+        },
+        
+        async loadModels() {
+            try {
+                const response = await fetch(`${this.apiBaseUrl}/api/models`);
+                if (response.ok) {
+                    const data = await response.json();
+                    this.availableModels = data.models;
+                    if (this.availableModels.length > 0 && !this.selectedModel) {
+                        this.selectedModel = this.availableModels[0];
+                    }
+                }
+            } catch (error) {
+                console.error('加载模型列表失败:', error);
+            }
+        },
+        
+        async handleModelUpload(request) {
+            const file = request.file;
+            const lowerName = file.name.toLowerCase();
+            if (!lowerName.endsWith('.pt') && !lowerName.endsWith('.onnx')) {
+                this.$message.error('只支持.pt和.onnx格式的模型文件');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            try {
+                const response = await fetch(`${this.apiBaseUrl}/api/upload_model`, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (response.ok) {
+                    this.$message.success('模型上传成功');
+                    await this.loadModels();
+                } else {
+                    const errorData = await response.json();
+                    this.$message.error(errorData.detail || '模型上传失败');
+                }
+            } catch (error) {
+                console.error('模型上传失败:', error);
+                this.$message.error('模型上传失败');
+            }
+        },
+        
+        fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = (e) => {
+                    const img = new Image();
+                    img.src = e.target.result;
+                    img.onload = () => {
+                        // 压缩图片逻辑
+                        const maxWidth = 1280;
+                        const maxHeight = 1280;
+                        let width = img.width;
+                        let height = img.height;
+
+                        if (width > maxWidth || height > maxHeight) {
+                            if (width > height) {
+                                height = Math.round((height * maxWidth) / width);
+                                width = maxWidth;
+                            } else {
+                                width = Math.round((width * maxHeight) / height);
+                                height = maxHeight;
+                            }
+                        }
+
+                        const canvas = document.createElement('canvas');
+                        canvas.width = width;
+                        canvas.height = height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, width, height);
+                        
+                        // 输出压缩后的base64，质量0.8
+                        resolve(canvas.toDataURL('image/jpeg', 0.8));
+                    };
+                    img.onerror = reject;
+                };
+                reader.onerror = e => reject(e);
+            });
+        },
+        
+        // --- 图片检测重构逻辑 ---
+        triggerImageUpload() {
+            this.$refs.imageInput.value = ''; // 清空选择，允许重复选择同一文件
+            this.$refs.imageInput.click();
+        },
+
+        async handleImageFileSelect(event) {
+            const files = event.target.files;
+            console.log('选择的文件:', files);
+            
+            if (!this.selectedModel) {
+                this.$message.warning("请先选择一个模型！");
+                return;
+            }
+            
+            if (!files || files.length === 0) {
+                console.log('没有选择文件');
+                return;
+            }
+            
+            // 非阻塞：不再使用 $loading 锁定界面
+            
+            try {
+                // 分批处理参数
+                const BATCH_SIZE = 5; // 每次处理5张图片，避免内存溢出
+                this.isBatchDetecting = true;
+
+                // 遍历文件进行分批处理
+                const newFiles = [];
+                const existingNames = new Set(this.uploadedFiles.map(f => f.name));
+                
+                for (let i = 0; i < files.length; i++) {
+                    if (!existingNames.has(files[i].name)) {
+                        newFiles.push(files[i]);
+                        existingNames.add(files[i].name); // 防止本次选择中也有重复
+                    }
+                }
+
+                if (newFiles.length === 0) {
+                    this.$message.info("所选图片已存在或未选择新图片");
+                    this.isBatchDetecting = false;
+                    return;
+                }
+                
+                if (newFiles.length < files.length) {
+                    this.$message.info(`已过滤 ${files.length - newFiles.length} 张重复图片`);
+                }
+
+                const totalNewFiles = newFiles.length;
+                this.resetBatchStats(totalNewFiles);
+                for (let i = 0; i < totalNewFiles; i += BATCH_SIZE) {
+                    const batchFiles = newFiles.slice(i, i + BATCH_SIZE);
+                    const batchImagesBase64 = [];
+                    const batchFileNames = [];
+
+                    // 1. 并发转换当前批次图片为Base64
+                    this.floatingProgressText = `正在处理第 ${i + 1} - ${Math.min(i + BATCH_SIZE, totalNewFiles)} 张图片...`;
+                    
+                    for (const file of batchFiles) {
+                        if (!file.type.startsWith("image/")) {
+                            this.$message.error(`文件 ${file.name} 不是有效的图片格式`);
+                            continue;
+                        }
+                        try {
+                            const base64 = await this.fileToBase64(file);
+                            batchImagesBase64.push(base64);
+                            batchFileNames.push(file.name);
+                            
+                            // 保存上传记录用于重新检测
+                            this.uploadedFiles.push({
+                                name: file.name,
+                                base64: base64
+                            });
+                        } catch (err) {
+                            console.error(`转换图片失败 ${file.name}:`, err);
+                            this.batchStats.processed += 1;
+                            this.batchStats.without_results += 1;
+                            this.batchStats.progress_percent = this.batchStats.total > 0 ? Math.min(100, Math.round((this.batchStats.processed / this.batchStats.total) * 100)) : 0;
+                        }
+                    }
+
+                    if (batchImagesBase64.length === 0) continue;
+
+                    // 2. 发送当前批次到服务器
+                    try {
+                        const response = await fetch(`${this.apiBaseUrl}/api/batch_detect`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                                model_name: this.selectedModel,
+                                images_base64: batchImagesBase64,
+                                conf: this.confidence,
+                                iou: this.iou,
+                                line_width: this.lineWidth,
+                                save_detected: this.enableImageCollection
+                            })
+                        });
+
+                        if (!response.ok) {
+                            const errorData = await response.json();
+                            throw new Error(errorData.detail || `服务器错误: ${response.status}`);
+                        }
+
+                        const result = await response.json();
+                        this.applyBatchResponseStats(result);
+                        
+                        // 3. 处理当前批次结果
+                        result.results.forEach((res, idx) => {
+                            this.imageResults.push({
+                                name: batchFileNames[idx],
+                                result: res,
+                                original: batchImagesBase64[idx] || '',
+                                raw_boxes: (result.raw_boxes && result.raw_boxes[idx]) ? result.raw_boxes[idx] : [],
+                                image_dims: (result.image_dims && result.image_dims[idx]) ? result.image_dims[idx] : {w: 0, h: 0},
+                                status: res ? 'success' : 'error',
+                                detectionCount: (result.detection_counts && result.detection_counts[idx]) || 0
+                            });
+                        });
+
+                    } catch (error) {
+                        console.error(`批次检测失败 (索引 ${i}):`, error);
+                        this.batchStats.processed += batchFiles.length;
+                        this.batchStats.without_results += batchFiles.length;
+                        this.batchStats.progress_percent = this.batchStats.total > 0 ? Math.min(100, Math.round((this.batchStats.processed / this.batchStats.total) * 100)) : 0;
+                        this.$message.error(`部分图片检测失败: ${error.message}`);
+                    }
+                }
+                
+                this.$message.success(`检测完成！有结果 ${this.batchStats.with_results} 张，无结果 ${this.batchStats.without_results} 张`);
+            } catch (error) {
+                console.error("批量检测整体失败:", error);
+                this.$message.error(`检测中断: ${error.message}`);
+            } finally {
+                this.isBatchDetecting = false;
+                this.$refs.imageInput.value = ''; // 重置文件输入
+            }
+        },
+        
+        clearImages() {
+            this.$confirm('确定要清空所有图片吗？', '提示', {
+                confirmButtonText: '确定',
+                cancelButtonText: '取消',
+                type: 'warning'
+            }).then(() => {
+                this.imageResults = [];
+                this.uploadedFiles = [];
+                this.resetBatchStats(0);
+                this.$message.success('已清空所有图片');
+            }).catch(() => {});
+        },
+        
+        async reDetectImages() {
+            if (this.uploadedFiles.length === 0 || !this.selectedModel) {
+                this.$message.warning('没有已上传的图片或未选择模型');
+                return;
+            }
+            
+            // 递增代数，使之前正在运行的重检自动失效
+            this._reDetectGeneration = (this._reDetectGeneration || 0) + 1;
+            const myGeneration = this._reDetectGeneration;
+            
+            console.log(`重新检测开始 (gen=${myGeneration})，使用已保存的文件`);
+            this.floatingProgressText = `正在重新检测 ${this.uploadedFiles.length} 张图片...`;
+            
+            try {
+                // 先一次性构建完整的新结果数组，而不是清空后逐步 push
+                const newResults = [];
+                
+                const BATCH_SIZE = 5;
+                const totalFiles = this.uploadedFiles.length;
+                this.resetBatchStats(totalFiles);
+                this.isBatchDetecting = true;
+
+                for (let i = 0; i < totalFiles; i += BATCH_SIZE) {
+                    // 如果有更新的重检请求，当前调用立即放弃
+                    if (this._reDetectGeneration !== myGeneration) {
+                        console.log(`重检 gen=${myGeneration} 被新请求取代，放弃`);
+                        return;
+                    }
+                    
+                    const batchFiles = this.uploadedFiles.slice(i, i + BATCH_SIZE);
+                    const batchImagesBase64 = batchFiles.map(f => f.base64);
+                    const batchFileNames = batchFiles.map(f => f.name);
+                    
+                    this.floatingProgressText = `正在重新检测第 ${i + 1} - ${Math.min(i + BATCH_SIZE, totalFiles)} 张...`;
+
+                    try {
+                        const response = await fetch(`${this.apiBaseUrl}/api/batch_detect`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                                model_name: this.selectedModel,
+                                images_base64: batchImagesBase64,
+                                conf: this.confidence,
+                                iou: this.iou,
+                                line_width: this.lineWidth,
+                                save_detected: this.enableImageCollection
+                            })
+                        });
+                        
+                        // 再次检查代数
+                        if (this._reDetectGeneration !== myGeneration) return;
+                        
+                        if (!response.ok) {
+                            const errorData = await response.json();
+                            throw new Error(errorData.detail || `服务器错误: ${response.status}`);
+                        }
+                        
+                        const result = await response.json();
+                        this.applyBatchResponseStats(result);
+                        
+                        result.results.forEach((res, idx) => {
+                            newResults.push({
+                                name: batchFileNames[idx],
+                                result: res,
+                                original: batchFiles[idx] ? batchFiles[idx].base64 : '',
+                                raw_boxes: (result.raw_boxes && result.raw_boxes[idx]) ? result.raw_boxes[idx] : [],
+                                image_dims: (result.image_dims && result.image_dims[idx]) ? result.image_dims[idx] : {w: 0, h: 0},
+                                status: res ? 'success' : 'error',
+                                detectionCount: (result.detection_counts && result.detection_counts[idx]) || 0
+                            });
+                        });
+
+                    } catch (error) {
+                        console.error(`重新检测批次失败 (索引 ${i}):`, error);
+                        this.batchStats.processed += batchFiles.length;
+                        this.batchStats.without_results += batchFiles.length;
+                        this.batchStats.progress_percent = this.batchStats.total > 0 ? Math.min(100, Math.round((this.batchStats.processed / this.batchStats.total) * 100)) : 0;
+                        batchFileNames.forEach((name, idx) => {
+                            newResults.push({
+                                name: name,
+                                result: '',
+                                original: batchFiles[idx] ? batchFiles[idx].base64 : '',
+                                raw_boxes: [],
+                                image_dims: {w: 0, h: 0},
+                                status: 'error',
+                                detectionCount: 0
+                            });
+                        });
+                    }
+                }
+                
+                // 最终一次性替换，避免中间态混乱
+                if (this._reDetectGeneration === myGeneration) {
+                    this.imageResults = newResults;
+                    this.$message.success(`重新检测完成！有结果 ${this.batchStats.with_results} 张，无结果 ${this.batchStats.without_results} 张`);
+                }
+            } catch (error) {
+                console.error("重新检测失败:", error);
+                this.$message.error(`重新检测中断: ${error.message}`);
+            } finally {
+                if (this._reDetectGeneration === myGeneration) {
+                    this.isBatchDetecting = false;
+                }
+            }
+        },
+        
+        // --- 视频检测重构逻辑 ---
+        triggerVideoUpload() { this.$refs.videoInput.click(); },
+        
+        handleVideoFileSelect(event) {
+            const file = event.target.files[0];
+            if (file && file.type.startsWith('video/')) {
+                this.stopVideoDetection(); 
+                this.originalVideoUrl = URL.createObjectURL(file);
+                this.$refs.sourceVideo.src = this.originalVideoUrl;
+                this.$refs.sourceVideo.controls = true;
+            } else {
+                this.$message.error('请选择一个有效的视频文件！');
+            }
+        },
+
+        onVideoLoaded() { this.$message.success('视频加载成功，请点击开始检测'); },
+        
+        onVideoSeeked() {
+            if (this.isDetectingVideo) {
+                this.isSeeking = true;
+                this.stopFramePushing();
+                this.$nextTick(() => {
+                    this.sendFrame().then(() => {
+                        this.isSeeking = false;
+                        if (!this.isPaused) {
+                           this.startFramePushing();
+                        }
+                    });
+                });
+            }
+        },
+
+        toggleVideoDetection() {
+            if (!this.originalVideoUrl) return this.$message.error('请先选择视频文件');
+
+            if (!this.isDetectingVideo) {
+                this.isDetectingVideo = true; 
+                this.isPaused = false;
+                this.setupWebSocket();
+                return;
+            }
+
+            this.isPaused = !this.isPaused;
+            if (this.isPaused) {
+                this.stopFramePushing();
+                this.$message.info('检测已暂停');
+            } else {
+                this.startFramePushing();
+                this.$message.info('检测已继续');
+            }
+        },
+
+        stopVideoDetection() {
+            const video = this.$refs.sourceVideo;
+            if (video) {
+                video.pause();
+            }
+            // 导出距离追踪日志
+            this.exportDistanceLog();
+            if (this.socket) {
+                this.socket.close();
+            }
+            this.distanceLog = [];
+            this.lastDistanceLogTime = 0;
+        },
+
+        exportDistanceLog() {
+            if (this.distanceLog.length === 0) return;
+            const lines = [];
+            lines.push('时间,目标ID,类别,距离(px/s)');
+            for (const entry of this.distanceLog) {
+                for (const t of entry.tracks) {
+                    lines.push(`${entry.time},${t.id},${t.class},${t.dist_px_s !== null ? t.dist_px_s : '-'}`);
+                }
+            }
+            const content = lines.join('\n');
+            const blob = new Blob(['﻿' + content], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            const now = new Date();
+            const ts = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}`;
+            a.href = url;
+            a.download = `距离追踪日志_${ts}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            this.$message.success(`距离日志已导出（${this.distanceLog.length}条记录）`);
+        },
+        
+        setupWebSocket() {
+            if (this.socket) return; 
+
+            const wsUrl = `${this.wsBaseUrl}/ws/video_detection`;
+            this.socketStatus = 'connecting';
+            this.$message.info('正在连接到检测服务器...');
+            this.socket = new WebSocket(wsUrl);
+            
+            this.socket.onopen = () => {
+                this.socketStatus = 'connected';
+                this.$message.success('连接成功！');
+                this.startFramePushing(); 
+            };
+            
+            this.socket.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                this.detectedVideoFrameUrl = data.image_base64;
+                if (data.tracking) {
+                    this.trackingData = data.tracking;
+                    // 每秒记录一次距离数据
+                    if (data.timestamp - this.lastDistanceLogTime >= 1.0) {
+                        this.lastDistanceLogTime = data.timestamp;
+                        const entry = {
+                            time: new Date(data.timestamp * 1000).toISOString(),
+                            tracks: data.tracking.map(t => ({
+                                id: t.track_id,
+                                class: t.class_name,
+                                dist_px_s: t.distance_per_sec !== null ? t.distance_per_sec.toFixed(1) : null
+                            }))
+                        };
+                        this.distanceLog.push(entry);
+                    }
+                }
+
+                if (!this.isPaused && !this.isSeeking) {
+                    this.startFramePushing();
+                }
+            };
+
+            this.socket.onerror = (error) => {
+                console.error("WebSocket Error:", error);
+                this.socketStatus = 'error';
+                this.$message.error('WebSocket 连接失败！');
+                this.cleanUpAfterDetection();
+            };
+
+            this.socket.onclose = () => {
+                this.cleanUpAfterDetection();
+            };
+        },
+
+        cleanUpAfterDetection() {
+            if(this.socketStatus !== 'disconnected') {
+                 console.log('WebSocket连接已关闭');
+            }
+            this.exportDistanceLog();
+            this.distanceLog = [];
+            this.lastDistanceLogTime = 0;
+            this.socketStatus = 'disconnected';
+            this.isDetectingVideo = false;
+            this.isPaused = true;
+            this.stopFramePushing();
+            this.socket = null;
+        },
+
+        startFramePushing() {
+            if (this.animationFrameId) return; 
+            this.animationFrameId = requestAnimationFrame(() => {
+                this.sendFrame().then(() => {});
+            });
+        },
+
+        async sendFrame() {
+            this.stopFramePushing();
+            
+            const video = this.$refs.sourceVideo;
+            if (!this.isDetectingVideo || this.isPaused || video.ended) {
+                if (video.ended) this.stopVideoDetection();
+                return;
+            }
+
+            if (video.videoWidth === 0 || video.videoHeight === 0) {
+                 this.startFramePushing();
+                 return;
+            }
+
+            const canvas = this.$refs.frameCanvas;
+            const ctx = canvas.getContext('2d');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            let frameData;
+            if (this.enableResize) {
+                const resizeCanvas = document.createElement('canvas');
+                resizeCanvas.width = 640;
+                resizeCanvas.height = 360;
+                const rCtx = resizeCanvas.getContext('2d');
+                rCtx.drawImage(canvas, 0, 0, 640, 360);
+                frameData = resizeCanvas.toDataURL('image/jpeg', 0.8);
+            } else {
+                frameData = canvas.toDataURL('image/jpeg', 0.8);
+            }
+            
+            if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+                this.socket.send(JSON.stringify({
+                    model_name: this.selectedModel,
+                    image_base64: frameData,
+                    conf: this.confidence,
+                    iou: this.iou,
+                    line_width: this.lineWidth,
+                    enable_tracking: this.enableDistanceTracking,
+                }));
+            }
+        },
+
+        stopFramePushing() {
+            if (this.animationFrameId) {
+                cancelAnimationFrame(this.animationFrameId);
+                this.animationFrameId = null;
+            }
+        },
+
+        // --- 图片预览方法（双栏对比）---
+        handlePreview(item) {
+            if (item && item.result) {
+                this.previewImageUrl = item.result;
+                this.previewOriginalUrl = item.original || '';
+                this.currentPreviewItem = item;
+                this.currentImageDims = item.image_dims || {w: 0, h: 0};
+                this.currentRawBoxes = (item.raw_boxes || []).map(b => ({...b, transparent: false}));
+                this.dialogVisible = true;
+            }
+        },
+
+        toggleBoxTransparency(box) {
+            box.transparent = !box.transparent;
+        },
+        getBoxColor(class_id) {
+            return this.boxColors[class_id % this.boxColors.length];
+        },
+        getBoxColorByName(className) {
+            if (!this.currentRawBoxes) return '#999';
+            const box = this.currentRawBoxes.find(b => b.class_name == className);
+            return box ? this.getBoxColor(box.class_id) : '#999';
+        },
+        getBoxStyle(box) {
+            const w = this.currentImageDims.w;
+            const h = this.currentImageDims.h;
+            return {
+                left: `${(box.x1 / w) * 100}%`,
+                top: `${(box.y1 / h) * 100}%`,
+                width: `${((box.x2 - box.x1) / w) * 100}%`,
+                height: `${((box.y2 - box.y1) / h) * 100}%`,
+                borderWidth: `${this.lineWidth}px`,
+                borderStyle: 'solid',
+                borderColor: this.getBoxColor(box.class_id)
+            };
+        },
+
+        resetPanAndZoom() {
+            this.panState = {
+                left:  { isPanning: false, startX: 0, startY: 0, translateX: 0, translateY: 0, scale: 1 },
+                right: { isPanning: false, startX: 0, startY: 0, translateX: 0, translateY: 0, scale: 1 }
+            };
+            ['previewLeft', 'previewRight'].forEach(ref => {
+                if (this.$refs[ref]) {
+                    this.$refs[ref].style.transform = 'translate(0px, 0px) scale(1)';
+                }
+            });
+        },
+
+        prevImage() {
+            if (this.hasPrevImage) {
+                this.resetPanAndZoom();
+                this.handlePreview(this.imageResults[this.currentPreviewIndex - 1]);
+            }
+        },
+
+        nextImage() {
+            if (this.hasNextImage) {
+                this.resetPanAndZoom();
+                this.handlePreview(this.imageResults[this.currentPreviewIndex + 1]);
+            }
+        },
+
+        resetPreview() {
+            this.currentPreviewItem = null;
+            this.previewImageUrl = '';
+            this.previewOriginalUrl = '';
+            this.currentRawBoxes = [];
+            this.currentImageDims = {w: 0, h: 0};
+            this.resetPanAndZoom();
+            ['leftPanel', 'rightPanel'].forEach(ref => {
+                if (this.$refs[ref]) {
+                    this.$refs[ref].classList.remove('grabbing');
+                }
+            });
+        },
+
+        zoomImage(e, side) {
+            const s = this.panState[side];
+            const delta = 0.1 * (e.deltaY > 0 ? -1 : 1);
+            s.scale = Math.max(0.3, Math.min(8, s.scale + delta));
+            this._applyTransform(side);
+        },
+
+        startPan(e, side) {
+            e.preventDefault();
+            const s = this.panState[side];
+            s.isPanning = true;
+            s.startX = e.clientX - s.translateX;
+            s.startY = e.clientY - s.translateY;
+            const panelRef = side === 'left' ? 'leftPanel' : 'rightPanel';
+            if (this.$refs[panelRef]) this.$refs[panelRef].classList.add('grabbing');
+        },
+
+        panImage(e, side) {
+            const s = this.panState[side];
+            if (!s.isPanning) return;
+            s.translateX = e.clientX - s.startX;
+            s.translateY = e.clientY - s.startY;
+            this._applyTransform(side);
+        },
+
+        endPan(side) {
+            this.panState[side].isPanning = false;
+            const panelRef = side === 'left' ? 'leftPanel' : 'rightPanel';
+            if (this.$refs[panelRef]) this.$refs[panelRef].classList.remove('grabbing');
+        },
+
+        _applyTransform(side) {
+            const s = this.panState[side];
+            const imgRef = side === 'left' ? 'previewLeft' : 'previewRight';
+            if (this.$refs[imgRef]) {
+                this.$refs[imgRef].style.transform =
+                    `translate(${s.translateX}px, ${s.translateY}px) scale(${s.scale})`;
+            }
+        },
+
+        // --- 右键菜单相关方法 ---
+        showContextMenu(event, item) {
+            this.contextMenuVisible = true;
+            this.contextMenuPosition = {
+                top: event.clientY,
+                left: event.clientX
+            };
+            this.currentRightClickedImage = item;
+        },
+
+        closeContextMenu() {
+            this.contextMenuVisible = false;
+        },
+
+        handleLabel(type, tagClass) {
+            if (this.currentRightClickedImage) {
+                // 查找是否已存在
+                const index = this.labeledResults.findIndex(item => item.name === this.currentRightClickedImage.name);
+                if (index !== -1) {
+                    // 更新现有记录
+                    this.$set(this.labeledResults, index, {
+                        name: this.currentRightClickedImage.name,
+                        type: type,
+                        tagClass: tagClass,
+                        image: this.currentRightClickedImage.result
+                    });
+                    this.$message.success(`已更新标记为：${type}`);
+                } else {
+                    // 添加新记录
+                    this.labeledResults.push({
+                        name: this.currentRightClickedImage.name,
+                        type: type,
+                        tagClass: tagClass,
+                        image: this.currentRightClickedImage.result
+                    });
+                    this.$message.success(`已标记为：${type}`);
+                }
+            }
+            this.closeContextMenu();
+        },
+
+        clearLabeledResults() {
+            this.$confirm('确定清空反馈列表吗？', '提示', {
+                confirmButtonText: '确定',
+                cancelButtonText: '取消',
+                type: 'warning'
+            }).then(() => {
+                this.labeledResults = [];
+                this.$message.success('已清空');
+            }).catch(() => {});
+        },
+
+        scrollToImage(name) {
+            // 清理文件名以匹配ID规则 (只保留字母、数字、中文)
+            const safeName = name.replace(/[^\w\u4e00-\u9fa5]/g, '');
+            const element = document.getElementById('img-' + safeName);
+            if (element) {
+                element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                // 高亮一下
+                element.style.transition = 'box-shadow 0.3s';
+                element.style.boxShadow = '0 0 15px #409EFF';
+                setTimeout(() => {
+                    element.style.boxShadow = '';
+                }, 2000);
+            } else {
+                this.$message.warning('未找到对应图片，可能已被清空');
+            }
+        }
+    },
+    beforeDestroy() {
+        if (this.socket) this.socket.close();
+    }
+});
+</script>
+</body>
+</html>

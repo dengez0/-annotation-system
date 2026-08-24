@@ -28,6 +28,7 @@ class AppPathsTest {
         assertEquals(logs.toAbsolutePath().normalize(), paths.logs());
         assertEquals(admin.toAbsolutePath().normalize(), paths.admin());
         assertEquals(processed.toAbsolutePath().normalize(), paths.processed());
+        assertEquals(root.resolve("backups").toAbsolutePath().normalize(), paths.backups());
         assertEquals(staticResources.toAbsolutePath().normalize(), paths.staticResources());
     }
 
@@ -36,5 +37,6 @@ class AppPathsTest {
         AppPaths paths = new AppPaths(temporary.toString());
         assertEquals(temporary.resolve("data").toAbsolutePath().normalize(), paths.data());
         assertEquals(temporary.resolve("static").toAbsolutePath().normalize(), paths.staticResources());
+        assertEquals(temporary.resolve("backups").toAbsolutePath().normalize(), paths.backups());
     }
 }

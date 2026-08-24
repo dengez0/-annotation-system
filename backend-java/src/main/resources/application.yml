@@ -20,9 +20,11 @@ simplelabel:
   logs-dir: ${SIMPLELABEL_LOGS_DIR:logs}
   admin-dir: ${SIMPLELABEL_ADMIN_DIR:admin}
   processed-dir: ${SIMPLELABEL_PROCESSED_DIR:processed}
+  backups-dir: ${SIMPLELABEL_BACKUPS_DIR:backups}
   static-dir: ${SIMPLELABEL_STATIC_DIR:static}
   yolo-worker-url: ${SIMPLELABEL_YOLO_WORKER_URL:http://127.0.0.1:18085}
   yolo-worker-token: ${SIMPLELABEL_YOLO_WORKER_TOKEN:local-simplelabel-worker}
+  model-detection-port: ${SIMPLELABEL_MODEL_DETECTION_PORT:8000}
   admin-token-hashes: ${SIMPLELABEL_ADMIN_TOKEN_HASHES:}
   admin-cookie-days: ${SIMPLELABEL_ADMIN_COOKIE_DAYS:365}
   admin-cookie-secure: ${SIMPLELABEL_ADMIN_COOKIE_SECURE:false}

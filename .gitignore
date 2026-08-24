@@ -30,6 +30,7 @@ htmlcov/
 # =========================
 .cache/
 logs/
+admin/
 *.log
 runs/
 
@@ -50,6 +51,7 @@ data/待检查/*
 data/已完成/*
 !data/已完成/.gitkeep
 processed/
+backups/
 
 # Model weights and exported inference engines
 models/*
