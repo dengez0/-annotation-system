@@ -1707,10 +1707,15 @@ async function saveCurrent() {
             location.replace(result.redirect_url);
             return;
         }
-        imgObj.processed = true; // Mark as processed
-        // We do NOT call renderFileList() here to avoid resetting scroll or zoom
-        // Just update the green dot for the current index
-        const item = document.getElementById('file-item-' + currentImageIndex);
+        // The user may have switched images while this save request was in flight.
+        // Resolve the item by the filename captured before the request, rather than
+        // currentImageIndex, otherwise a later-selected unannotated image receives
+        // this image's green status dot.
+        const savedIndex = images.findIndex(item => item.name === filename);
+        if (savedIndex < 0) return;
+        images[savedIndex].processed = true;
+        // We do NOT call renderFileList() here to avoid resetting scroll or zoom.
+        const item = document.getElementById('file-item-' + savedIndex);
         if (item) {
             const status = item.querySelector('.file-status');
             if (status) {

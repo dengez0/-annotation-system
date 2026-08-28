@@ -28,19 +28,26 @@ public class WorkLogReadService {
     }
 
     public Map<String, Object> overview(String range, String date, String ip, String project, String action) throws IOException {
-        List<Event> events = filter(range, date, ip, project, action, LocalDateTime.now(clock));
+        List<Event> scopedEvents = filter(range, date, null, project, action, LocalDateTime.now(clock));
+        List<Event> events = filterByIp(scopedEvents, ip);
         Map<String, IpSummary> byIp = new HashMap<>();
         Set<ImageKey> annotatedImages = new HashSet<>();
         int movedImages = 0;
         for (Event event : events) {
             IpSummary summary = byIp.computeIfAbsent(event.ip, ignored -> new IpSummary());
             ImageKey key = event.imageKey();
-            if (key != null) {
-                annotatedImages.add(key); summary.annotatedImages.add(key); summary.saves++; summary.boxes += event.boxes;
-            }
+            if (key != null) summary.saves++;
             int moved = event.movedImageCount();
             if (moved > 0) { movedImages += moved; summary.movedImages += moved; }
             if (summary.lastActivity == null || event.timestamp.isAfter(summary.lastActivity)) summary.lastActivity = event.timestamp;
+        }
+        for (Event event : filterByIp(latestSaveEvents(scopedEvents), ip)) {
+            ImageKey key = event.imageKey();
+            if (key == null) continue;
+            IpSummary summary = byIp.computeIfAbsent(event.ip, ignored -> new IpSummary());
+            annotatedImages.add(key);
+            summary.annotatedImages.add(key);
+            summary.boxes += event.boxes;
         }
         List<Map<String, Object>> ranking = new ArrayList<>();
         byIp.forEach((workerIp, value) -> {
@@ -66,15 +73,23 @@ public class WorkLogReadService {
     }
 
     public Map<String, Object> detail(String workerIp, String range, String date,
-                                      String project, String action, int limit) throws IOException {
-        List<Event> events = filter(range, date, workerIp, project, action, LocalDateTime.now(clock));
+                                       String project, String action, int limit) throws IOException {
+        List<Event> scopedEvents = filter(range, date, null, project, action, LocalDateTime.now(clock));
+        List<Event> events = filterByIp(scopedEvents, workerIp);
         Map<String, ProjectSummary> projects = new HashMap<>();
         for (Event event : events) {
             ProjectSummary summary = projects.computeIfAbsent(event.project, ignored -> new ProjectSummary());
             summary.actions++;
             ImageKey key = event.imageKey();
-            if (key != null) { summary.annotatedImages.add(key); summary.saves++; summary.boxes += event.boxes; }
+            if (key != null) summary.saves++;
             summary.movedImages += event.movedImageCount();
+        }
+        for (Event event : filterByIp(latestSaveEvents(scopedEvents), workerIp)) {
+            ImageKey key = event.imageKey();
+            if (key == null) continue;
+            ProjectSummary summary = projects.computeIfAbsent(event.project, ignored -> new ProjectSummary());
+            summary.annotatedImages.add(key);
+            summary.boxes += event.boxes;
         }
         List<Map<String, Object>> projectRows = new ArrayList<>();
         projects.forEach((name, value) -> {
@@ -105,6 +120,23 @@ public class WorkLogReadService {
                 .filter(event -> ip == null || ip.isBlank() || event.ip.equals(ip))
                 .filter(event -> project == null || project.isBlank() || event.project.equals(project))
                 .filter(event -> action == null || action.isBlank() || event.action.equals(action)).toList();
+    }
+
+    private static List<Event> filterByIp(List<Event> events, String ip) {
+        return events.stream()
+                .filter(event -> ip == null || ip.isBlank() || event.ip.equals(ip))
+                .toList();
+    }
+
+    private static List<Event> latestSaveEvents(List<Event> events) {
+        Map<ImageKey, Event> latest = new LinkedHashMap<>();
+        for (Event event : events) {
+            ImageKey key = event.imageKey();
+            if (key == null) continue;
+            Event existing = latest.get(key);
+            if (existing == null || !event.timestamp.isBefore(existing.timestamp)) latest.put(key, event);
+        }
+        return List.copyOf(latest.values());
     }
 
     private Map<String, Object> filterOptions(String range, String date) throws IOException {
@@ -185,7 +217,8 @@ public class WorkLogReadService {
     record Event(LocalDateTime timestamp, String ip, String action, String project,
                  String target, int count, int boxes, String destination) {
         ImageKey imageKey() {
-            return action.equals("SAVE_ANNOTATION") && !target.isBlank() && !target.equals("-")
+            return (action.equals("START_ANNOTATION") || action.equals("SAVE_ANNOTATION"))
+                    && !target.isBlank() && !target.equals("-")
                     ? new ImageKey(project, target) : null;
         }
         int movedImageCount() { return action.equals("MOVE_FILES") ? Math.max(count, 0) : 0; }

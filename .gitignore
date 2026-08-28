@@ -85,6 +85,7 @@ models/*
 *.env
 deploy/docker/.env
 !deploy/docker/.env.example
+!deploy/docker/.env.test.example
 secrets.*
 *.key
 *.pem

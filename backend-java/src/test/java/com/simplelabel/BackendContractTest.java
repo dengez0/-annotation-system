@@ -67,9 +67,12 @@ class BackendContractTest {
                         .cookie(new Cookie(AdminAccessService.ADMIN_COOKIE_NAME,
                                 "simplelabel-test-device-token-0123456789abcdef")))
                 .andExpect(status().isOk());
-        mvc.perform(get("/model-detection"))
+        mvc.perform(get("/model-detection").with(request -> {
+                    request.setServerPort(29090);
+                    return request;
+                }))
                 .andExpect(status().is3xxRedirection())
-                .andExpect(redirectedUrl("http://localhost:8000/"));
+                .andExpect(redirectedUrl("http://localhost:8000/?home_port=29090"));
         mvc.perform(get("/static/smoke.css"))
                 .andExpect(status().isOk())
                 .andExpect(content().contentTypeCompatibleWith("text/css"));

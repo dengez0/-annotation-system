@@ -1,13 +1,24 @@
 # SimpleLabel 2D 图像标注系统
 
-SimpleLabel 是一个面向目标检测数据集生产的 Web 标注系统。系统以 **Java 21 + Spring Boot** 提供页面、标注、文件管理、数据处理和权限控制，以独立的 **Python YOLO Worker** 执行模型推理；前端使用 HTML5 Canvas 和原生 JavaScript，无需额外前端构建步骤。
+SimpleLabel 是一个面向目标检测数据集生产的 Web 标注系统。系统以 **Java 21 + Spring Boot** 提供页面、标注、文件管理、数据处理和权限控制，以 **Python YOLO Worker** 执行自动标注，并提供独立的 **PT/ONNX 模型检测服务**；前端使用 HTML5 Canvas 和原生 JavaScript，无需额外前端构建步骤。
 
 当前版本支持从“未标注”到“已完成”的完整任务流、LabelMe JSON 标注、YOLO 自动标注、YOLO 数据集导出、批量文件操作、数据清洗、工作日志和基于设备令牌的管理员权限。
 
 > 项目包含旧 Flask 服务作为迁移和回滚参考。日常运行与新部署应优先使用 `backend-java/` 中的 Spring Boot 后端。
 
+## 当前开发与部署状态
+
+- 生产主站实际地址为 `http://192.168.1.226:18083`，生产模型检测实际地址为 `http://192.168.1.226:18086`。
+- 隔离测试主站为 `http://192.168.1.226:29090`，测试模型检测为 `http://192.168.1.226:29091`，数据位于独立的 `runtime-test/`。
+- 工作日志框数已改为“同一图片只统计最后一次保存的框数”；保存次数仍保留全部历史次数。
+- 模型检测多图上传已改为逐图原始字节请求，前端最多两路并发，避免大批量 Base64 JSON 导致 `fail to fetch`。
+- 返回首页逻辑已在本地改为优先读取 Java 传入的 `home_port`，并为 29091→29090、18086→18083 提供兜底；运行中的 29091 尚需更新页面文件后验证。
+- 当前工作区仍有未提交改动，且尚未生成同时包含 Java 与模型检测修改的最新生产全量包。部署或接手工作前请先阅读 [`PROJECT_HANDOVER.md`](PROJECT_HANDOVER.md)。
+- 生产 18086 的现有 Docker 映射与容器内监听端口必须在重建前现场确认，不能只按 `.env.example` 的默认 `8000` 推断。
+
 ## 目录
 
+- [当前开发与部署状态](#当前开发与部署状态)
 - [核心能力](#核心能力)
 - [系统架构](#系统架构)
 - [运行端口](#运行端口)
@@ -55,6 +66,14 @@ SimpleLabel 是一个面向目标检测数据集生产的 Web 标注系统。系
 - 模型文件由 `models/` 或运行时模型目录提供，不提交到 Git。
 - 当前 Java 主流程仅保留 YOLO 自动标注；旧日志中的 LLM/SAM3 操作名不代表仍有对应入口。
 
+### 独立模型检测
+
+- 支持上传和选择 PT/ONNX 模型，对图片和视频执行检测。
+- 多图模式使用 `POST /api/detect-image` 逐图上传原始文件，不再将整批图片编码为 Base64 JSON。
+- 单图默认限制为 25 MB，浏览器最多同时发送两个检测请求，服务端通过推理锁保护模型推理。
+- 接口返回检测坐标、类别和置信度，检测框由浏览器在原图上绘制。
+- 通过兼容适配器同时支持现代 Ultralytics 模型和原始 YOLOv5 checkpoint。
+
 ### 文件和数据集管理
 
 - 上传带目录结构的图片和标注文件。
@@ -75,18 +94,16 @@ SimpleLabel 是一个面向目标检测数据集生产的 Web 标注系统。系
 
 ```text
 浏览器
-  │  HTTP :18083（生产）/ :18084（预览）
-  ▼
-Spring Boot 后端（backend-java）
-  ├─ Thymeleaf 页面和静态资源
-  ├─ 标注、文件、工作流、日志、权限、数据处理 API
-  ├─ data / models / logs / admin / processed / backups
-  └─ HTTP 调用 127.0.0.1:18085
-                 │
-                 ▼
-           Python YOLO Worker
-                 │
-                 └─ ultralytics / ONNX Runtime / 本地模型
+  ├─ :18083（生产）/ :29090（测试）→ Spring Boot 主站
+  │    ├─ Thymeleaf 页面、标注、文件、日志、权限和数据处理 API
+  │    └─ HTTP 调用 127.0.0.1:18085 → Python YOLO Worker
+  │
+  └─ :18086（生产）/ :29091（测试）→ Python 模型检测服务
+       └─ PT / ONNX / YOLOv5 兼容推理
+
+持久化目录
+  ├─ 生产：runtime/{data,models,logs,admin,processed,backups}
+  └─ 测试：runtime-test/{data,models,logs,admin,processed,backups}
 ```
 
 主要技术栈：
@@ -94,7 +111,7 @@ Spring Boot 后端（backend-java）
 | 层级 | 技术 |
 | --- | --- |
 | 主后端 | Java 21、Spring Boot 3.4、Spring MVC、Thymeleaf |
-| 推理服务 | Python、Flask、Ultralytics、ONNX Runtime |
+| 推理服务 | Python、FastAPI/Flask、Ultralytics、ONNX Runtime、YOLOv5 |
 | 前端 | HTML5 Canvas、原生 JavaScript、CSS |
 | 图像与归档 | metadata-extractor、TwelveMonkeys ImageIO、Apache Commons Compress |
 | 数据格式 | LabelMe JSON、YOLO TXT |
@@ -105,12 +122,14 @@ Spring Boot 后端（backend-java）
 | 端口 | 用途 | 默认监听范围 |
 | --- | --- | --- |
 | `18083` | Java 正式服务 | `0.0.0.0` |
-| `18084` | Java 并行预览/隔离测试服务 | `0.0.0.0` |
+| `18084` | Windows 本地 Java 并行预览服务 | `0.0.0.0` |
 | `18085` | YOLO Worker | 本机回环地址 |
-| `8000` | 可选的 PT/ONNX 模型检测页面（生产） | 按部署配置 |
-| `8001` | 可选的 PT/ONNX 模型检测页面（测试） | 按部署配置 |
+| `18086` | 生产 PT/ONNX 模型检测页面（现场实际端口） | `0.0.0.0`，重建前核对 Docker 映射 |
+| `29090` | Ubuntu 隔离测试 Java 主站 | `192.168.1.226` |
+| `29091` | Ubuntu 隔离测试模型检测页面 | `192.168.1.226` |
+| `8000` | 仓库默认的模型检测容器监听/示例端口 | 按部署配置，不等同于现场生产外部端口 |
 
-局域网用户通常访问 `http://<服务器IP>:18083`。请仅开放实际需要的端口，YOLO Worker 不应直接暴露到局域网或公网。
+局域网用户通过 18083 使用生产主站，通过 18086 使用生产模型检测。测试环境仅使用 29090/29091，并必须挂载 `runtime-test/`；YOLO Worker 18085 不应直接暴露到局域网或公网。
 
 ## 环境要求
 
@@ -247,6 +266,8 @@ curl --fail http://127.0.0.1:18085/internal/health
 
 Docker 配置位于 `deploy/docker/`，会将运行数据绑定到仓库根目录的 `runtime/`，从而使容器重建不影响标注数据。
 
+生产与测试必须使用不同的运行目录：生产挂载 `runtime/`，测试挂载 `runtime-test/`。生产实际使用 18083/18086；隔离测试使用 29090/29091。当前服务器曾采用 `simplelabel-web-test` 与 `simplelabel-model-test` 两个独立测试容器，执行仓库的单容器测试栈脚本前应先用 `docker ps -a` 核对现场拓扑。
+
 ### 首次部署
 
 ```bash
@@ -276,6 +297,8 @@ docker compose --env-file deploy/docker/.env -f deploy/docker/compose.yml down
 ```
 
 不要对该项目使用 `docker compose down -v`。更完整的生产部署、隔离测试栈和令牌恢复说明见 [`deploy/docker/README.md`](deploy/docker/README.md)。Ubuntu 原生部署参考 [`deploy/ubuntu/README.md`](deploy/ubuntu/README.md)。
+
+当前生产发布还需同时包含 Java 框数统计和 Python 模型检测修改，已有的 `simplelabel-worklog-final-boxes-production.tar.gz` 只是 Java 热修复包，不能作为本次完整生产包。生产发布与回滚前置检查见 [`PROJECT_HANDOVER.md`](PROJECT_HANDOVER.md)。
 
 ## 使用说明
 
@@ -350,7 +373,7 @@ processed/                     # 数据处理结果
 backups/                       # 可选的处理前备份
 ```
 
-Docker 默认使用对应的 `runtime/data`、`runtime/models`、`runtime/logs`、`runtime/admin`、`runtime/processed` 和 `runtime/backups`。
+Docker 生产环境使用对应的 `runtime/data`、`runtime/models`、`runtime/logs`、`runtime/admin`、`runtime/processed` 和 `runtime/backups`；隔离测试环境使用同结构的 `runtime-test/`。任何代码发布均不得覆盖、删除或用另一环境的数据替换这些目录。
 
 图片和标注文件同名存放，例如：
 
@@ -404,6 +427,8 @@ Spring Boot 默认配置位于 `backend-java/src/main/resources/application.yml`
 | `SIMPLELABEL_YOLO_WORKER_TOKEN` | 本地开发值 | Java 与 Worker 共享令牌；生产必须替换 |
 | `SIMPLELABEL_YOLO_WORKER_PORT` | `18085` | Worker 端口 |
 | `SIMPLELABEL_YOLO_DEVICE` | `cpu`（部署示例） | 推理设备，如 `cpu`、`0` |
+| `SIMPLELABEL_MODEL_DETECTION_PORT` | `8000` | 模型检测监听端口，同时被 Java 用作模型检测跳转端口；生产外部 18086 部署前必须核对实际映射 |
+| `SIMPLELABEL_MODEL_DETECTION_MAX_IMAGE_BYTES` | `26214400` | 独立模型检测单张图片请求体上限，默认 25 MB |
 | `SIMPLELABEL_ADMIN_TOKEN_HASHES` | 空 | 仅首次启动导入的管理员令牌摘要 |
 | `SIMPLELABEL_ADMIN_COOKIE_DAYS` | `365` | 管理员 Cookie 有效天数 |
 | `SIMPLELABEL_ADMIN_COOKIE_SECURE` | `false` | 启用 HTTPS 后应设为 `true` |
@@ -477,6 +502,13 @@ Spring Boot 默认配置位于 `backend-java/src/main/resources/application.yml`
 | `GET/POST` | `/api/models`、`/api/upload_model` | 列出/上传模型 |
 | `DELETE` | `/api/delete_model/{modelName}` | 删除模型 |
 
+独立模型检测服务还提供：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `POST` | `/api/detect-image?model_name=...&conf=...&iou=...` | 请求体为单张图片原始字节，返回检测坐标、类别、置信度和图片尺寸 |
+| `POST` | `/api/batch_detect` | 旧批量 Base64 接口，仅保留兼容；当前网页不再调用 |
+
 ### 自动标注与运维
 
 | 方法 | 路径 | 说明 |
@@ -505,8 +537,11 @@ Windows 本地工具链也可以直接执行：
 ### Python
 
 ```bash
+python -m unittest tests.test_model_detection_streaming_contract tests.test_model_detection_compat
 python -m pytest tests
 ```
+
+前两项覆盖模型检测的流式上传契约、两路前端并发、返回首页端口规则和 YOLOv5 兼容适配。交接时当前 Windows 会话中的 `python.exe` 无法访问，因此这些新增测试尚需在可用 Python 环境中重新执行并记录结果。
 
 ### Docker 配置检查
 
@@ -541,6 +576,21 @@ bash deploy/docker/verify.sh
 - 大文件上传时检查反向代理的请求体限制和超时设置。
 - Docker 部署确认 `runtime/` 绑定目录存在且 UID/GID 与 `.env` 一致。
 
+### 多图模型检测出现 `fail to fetch`
+
+1. 在浏览器网络面板确认新页面调用的是逐图 `/api/detect-image`，不是旧 `/api/batch_detect`。
+2. 检查 18086/29091 容器日志是否发生重启、内存不足、请求体过大或模型加载失败。
+3. 确认单图没有超过 `SIMPLELABEL_MODEL_DETECTION_MAX_IMAGE_BYTES`。
+4. 如果源码已更新但浏览器仍显示旧行为，检查容器内 `model_detection.html`，并强制刷新；新服务会对首页返回 `Cache-Control: no-store`。
+
+### 模型检测返回首页端口错误
+
+Java 主站跳转到模型检测时会通过 `home_port` 查询参数显式传入首页端口；检测页面还保留端口映射兜底：29091 返回 29090，18086 返回 18083。若仍跳错，依次检查：
+
+1. 浏览器地址中是否包含 `?home_port=29090` 或 `?home_port=18083`。
+2. 运行容器中的 `model_detection.html` 是否包含 `returnToHome`。
+3. 页面响应是否含 `Cache-Control: no-store`，以及浏览器是否仍使用旧缓存。
+
 ### 管理员无法登录
 
 - 确认设备名与注册表中的名称一致。
@@ -560,6 +610,8 @@ bash deploy/docker/verify.sh
 ## 迁移与回滚
 
 Java 后端复用既有数据目录、LabelMe JSON 和工作日志格式。旧 Flask 服务可用于应急回滚，但不要让两个后端同时写同一份标注数据。详细迁移说明见 [`JAVA_MIGRATION.md`](JAVA_MIGRATION.md)。
+
+当前环境、未提交改动、发布物状态、生产 18086 风险和接任顺序统一记录在 [`PROJECT_HANDOVER.md`](PROJECT_HANDOVER.md)；2026-08-26 的实际补丁传输与 JAR 热更新过程见 [`deploy/DEPLOYMENT_RUNBOOK_2026-08-26.md`](deploy/DEPLOYMENT_RUNBOOK_2026-08-26.md)。
 
 ## License
 

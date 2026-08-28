@@ -42,7 +42,7 @@ class WorkLogReadServiceTest {
     }
 
     @Test
-    void overviewCountsDistinctImagesSeparatelyFromSaveOperations() throws Exception {
+    void overviewUsesOnlyTheLastSavedBoxCountForEachImage() throws Exception {
         WorkLogReadService reader = reader();
         LocalDateTime now = LocalDateTime.now();
         writeLines(
@@ -56,7 +56,49 @@ class WorkLogReadServiceTest {
 
         assertThat(summary.get("images")).isEqualTo(2);
         assertThat(summary.get("saves")).isEqualTo(3);
-        assertThat(summary.get("boxes")).isEqualTo(6);
+        assertThat(summary.get("boxes")).isEqualTo(4);
+    }
+
+    @Test
+    void overviewIncludesTheInitialSaveWhenItIsTheOnlySaveForAnImage() throws Exception {
+        WorkLogReadService reader = reader();
+        LocalDateTime now = LocalDateTime.now();
+        writeLines(
+                annotationLine(now.minusMinutes(2), "10.0.0.1", "START_ANNOTATION", "new.jpg", 6),
+                line(now.minusMinutes(1), "10.0.0.1", "updated.jpg", 2)
+        );
+
+        Map<String, Object> result = reader.overview("today", null, null, null, null);
+        Map<?, ?> summary = (Map<?, ?>) result.get("summary");
+
+        assertThat(summary.get("images")).isEqualTo(2);
+        assertThat(summary.get("boxes")).isEqualTo(8);
+    }
+
+    @Test
+    void overviewAssignsFinalBoxesToTheLastSaverInsteadOfAccumulatingHistory() throws Exception {
+        WorkLogReadService reader = reader();
+        LocalDateTime now = LocalDateTime.now();
+        writeLines(
+                line(now.minusMinutes(3), "10.0.0.1", "shared.jpg", 20),
+                line(now.minusMinutes(2), "10.0.0.1", "only-first.jpg", 7),
+                line(now.minusMinutes(1), "10.0.0.2", "shared.jpg", 25)
+        );
+
+        Map<String, Object> all = reader.overview("today", null, null, null, null);
+        Map<?, ?> allSummary = (Map<?, ?>) all.get("summary");
+        List<Map<?, ?>> ranking = (List<Map<?, ?>>) all.get("ranking");
+        Map<?, ?> first = ranking.stream().filter(row -> row.get("ip").equals("10.0.0.1")).findFirst().orElseThrow();
+        Map<?, ?> second = ranking.stream().filter(row -> row.get("ip").equals("10.0.0.2")).findFirst().orElseThrow();
+
+        assertThat(allSummary.get("boxes")).isEqualTo(32);
+        assertThat(first.get("boxes")).isEqualTo(7);
+        assertThat(first.get("saves")).isEqualTo(2);
+        assertThat(second.get("boxes")).isEqualTo(25);
+
+        Map<String, Object> firstOnly = reader.overview("today", null, "10.0.0.1", null, null);
+        Map<?, ?> firstOnlySummary = (Map<?, ?>) firstOnly.get("summary");
+        assertThat(firstOnlySummary.get("boxes")).isEqualTo(7);
     }
 
     @Test
@@ -116,7 +158,11 @@ class WorkLogReadServiceTest {
     }
 
     private static String line(LocalDateTime time, String ip, String target, int boxes) {
-        return time.format(FORMAT) + " | " + ip + " | SAVE_ANNOTATION | annotation files/shift | "
+        return annotationLine(time, ip, "SAVE_ANNOTATION", target, boxes);
+    }
+
+    private static String annotationLine(LocalDateTime time, String ip, String action, String target, int boxes) {
+        return time.format(FORMAT) + " | " + ip + " | " + action + " | annotation files/shift | "
                 + target + " | boxes=" + boxes + " | success";
     }
 

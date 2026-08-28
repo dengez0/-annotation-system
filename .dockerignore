@@ -11,6 +11,7 @@ models
 logs
 processed
 runtime
+runtime-test
 dist
 wheelhouse
 backend-java/src
@@ -18,7 +19,21 @@ backend-java/pom.xml
 backend-java/target/*
 !backend-java/target/simplelabel-java-1.0.0-SNAPSHOT.jar
 deploy/docker/.env
+deploy/docker/.env.test
 *.pt
 *.pth
 *.onnx
 *.engine
+
+# Root runtime exclusions above also match vendored source directories with the
+# same names. Re-include the Python packages required by the application image.
+!model-detection-python/ultralytics/data/
+!model-detection-python/ultralytics/data/**
+!model-detection-python/ultralytics/models/
+!model-detection-python/ultralytics/models/**
+!model-detection-python/ultralytics/cfg/models/
+!model-detection-python/ultralytics/cfg/models/**
+!yolov5/data/
+!yolov5/data/**
+!yolov5/models/
+!yolov5/models/**

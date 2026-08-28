@@ -70,8 +70,8 @@ case "${SIMPLELABEL_DEPLOYMENT_MODE}" in
         ;;
     test)
         [[ "${SIMPLELABEL_BIND_ADDRESS}" == "0.0.0.0" ]] || { echo "[ERROR] Test Web must bind to 0.0.0.0." >&2; exit 1; }
-        [[ "${SIMPLELABEL_PORT}" == "18083" && "${SIMPLELABEL_MODEL_DETECTION_PORT}" == "8001" && "${SIMPLELABEL_YOLO_WORKER_PORT}" == "18085" ]] || {
-            echo "[ERROR] Test ports must be 18083 (web), 8001 (model detection), and 18085 (worker)." >&2
+        [[ "${SIMPLELABEL_PORT}" == "18083" && "${SIMPLELABEL_MODEL_DETECTION_PORT}" == "29091" && "${SIMPLELABEL_YOLO_WORKER_PORT}" == "18085" ]] || {
+            echo "[ERROR] Test container ports must be 18083 (web), 29091 (model detection), and 18085 (worker)." >&2
             exit 1
         }
         [[ "${SIMPLELABEL_DATA_DIR}" == /srv/simplelabel/* ]] || { echo "[ERROR] Test must use an isolated SimpleLabel data mount." >&2; exit 1; }

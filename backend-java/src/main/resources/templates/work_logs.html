@@ -33,14 +33,14 @@
             <article><span>活跃 IP</span><strong id="summary-ips">-</strong></article>
             <article><span title="已标注图片去重数 + 成功移动图片数">标注/移动图片数</span><strong id="summary-images">-</strong></article>
             <article><span>保存次数</span><strong id="summary-saves">-</strong></article>
-            <article><span>标注框数</span><strong id="summary-boxes">-</strong></article>
+            <article><span title="每张图片只取最后一次保存的框数，并归属给最后保存该图片的 IP">标注框数</span><strong id="summary-boxes">-</strong></article>
         </section>
 
         <section class="work-log-panel">
             <div class="work-log-panel-title"><h2>人员工作量排行</h2><span id="ranking-note"></span></div>
             <div class="work-log-table-wrap">
                 <table class="work-log-table">
-                    <thead><tr><th>IP</th><th>标注/移动图片数</th><th>保存次数</th><th>标注框数</th><th>最近活动</th><th></th></tr></thead>
+                    <thead><tr><th>IP</th><th>标注/移动图片数</th><th>保存次数</th><th title="每张图片只取最后一次保存的框数">标注框数</th><th>最近活动</th><th></th></tr></thead>
                     <tbody id="ranking-body"></tbody>
                 </table>
             </div>
@@ -155,7 +155,7 @@
             if (!detail.projects.length) projects.append('暂无项目记录');
             detail.projects.forEach(project => {
                 const item = document.createElement('div');
-                item.textContent = `${project.project} · 图片 ${project.images} 张（标注 ${project.annotated_images} + 移动 ${project.moved_images}）· 保存 ${project.saves} 次 · ${project.boxes} 框 · 操作 ${project.actions} 次`;
+                item.textContent = `${project.project} · 图片 ${project.images} 张（标注 ${project.annotated_images} + 移动 ${project.moved_images}）· 保存 ${project.saves} 次 · 最终 ${project.boxes} 框 · 操作 ${project.actions} 次`;
                 projects.appendChild(item);
             });
             container.appendChild(projects);

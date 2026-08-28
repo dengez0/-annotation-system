@@ -1,16 +1,15 @@
+name: simplelabel-test
+
 services:
   simplelabel-test:
-    build:
-      context: ../..
-      dockerfile: deploy/docker/Dockerfile
-    image: simplelabel:test
+    image: "${SIMPLELABEL_TEST_IMAGE:-simplelabel:test-29090}"
     container_name: simplelabel-test
-    restart: unless-stopped
+    restart: "no"
     user: "${SIMPLELABEL_UID:-1000}:${SIMPLELABEL_GID:-1000}"
     env_file: .env.test
     ports:
-      - "0.0.0.0:18084:18083"
-      - "0.0.0.0:8001:8001"
+      - "${SIMPLELABEL_TEST_BIND_ADDRESS:-192.168.1.226}:${SIMPLELABEL_TEST_WEB_PORT:-29090}:18083"
+      - "${SIMPLELABEL_TEST_BIND_ADDRESS:-192.168.1.226}:${SIMPLELABEL_TEST_MODEL_PORT:-29091}:29091"
     volumes:
       - ../../runtime-test/data:/srv/simplelabel/data
       - ../../runtime-test/models:/srv/simplelabel/models
@@ -18,8 +17,6 @@ services:
       - ../../runtime-test/admin:/srv/simplelabel/admin
       - ../../runtime-test/processed:/srv/simplelabel/processed
       - ../../runtime-test/backups:/srv/simplelabel/backups
-    tmpfs:
-      - /tmp:size=2g,mode=1777
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "--max-time", "5", "http://127.0.0.1:18083/internal/health"]
       interval: 30s
@@ -30,6 +27,6 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    pids_limit: 512
-    mem_limit: 9g
-    cpus: 4.0
+    pids_limit: 256
+    mem_limit: 6g
+    cpus: 1.0
